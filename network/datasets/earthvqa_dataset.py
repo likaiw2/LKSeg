@@ -1,0 +1,76 @@
+from .transform import *
+import os
+import os.path as osp
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+import cv2
+import albumentations as albu
+from PIL import Image
+import random
+
+CLASSES = ('background', 'building', 'road', 'water', 'barren', 'forest',
+           'agricultural', 'playground', 'pond')
+
+PALETTE = [[255, 255, 255], [255, 0, 0], [255, 255, 0], [0, 0, 255],
+           [159, 129, 183], [0, 255, 0], [255, 195, 128], [165, 0, 165], [0, 185, 246]]
+
+ORIGIN_IMG_SIZE = (1024, 1024)
+
+def get_training_transform():
+    train_transform = [
+        albu.HorizontalFlip(p=0.5),
+        albu.VerticalFlip(p=0.5),
+        albu.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.25),
+        albu.Sharpen(),
+        albu.Normalize()
+    ]
+    return albu.Compose(train_transform)
+
+def train_aug(img, mask):
+    crop_aug = Compose([RandomScale(scale_list=[0.75, 1.0, 1.25, 1.5], mode='value'),
+                        SmartCropV1(crop_size=512, max_ratio=0.75, ignore_index=255, nopad=False)])
+    img, mask = crop_aug(img, mask)
+    img, mask = np.array(img), np.array(mask)
+    aug = get_training_transform()(image=img.copy(), mask=mask.copy())
+    img, mask = aug['image'], aug['mask']
+    return img, mask
+
+class EarthVQADataset(Dataset):
+    def __init__(self, data_root='data/EarthVQA/Train', img_dir='images_png', mask_dir='masks_png',
+                 img_suffix='.png', mask_suffix='.png', transform=train_aug, img_size=ORIGIN_IMG_SIZE):
+        self.data_root = data_root
+        self.img_dir = img_dir
+        self.mask_dir = mask_dir
+        self.img_suffix = img_suffix
+        self.mask_suffix = mask_suffix
+        self.transform = transform
+        self.img_size = img_size
+        self.img_ids = self.get_img_ids()
+
+    def get_img_ids(self):
+        img_filename_list = os.listdir(osp.join(self.data_root, self.img_dir))
+        mask_filename_list = os.listdir(osp.join(self.data_root, self.mask_dir))
+        assert len(img_filename_list) == len(mask_filename_list)
+        img_ids = [id.split('.')[0] for id in img_filename_list]
+        return img_ids
+
+    def __getitem__(self, index):
+        img_id = self.img_ids[index]
+        img_name = osp.join(self.data_root, self.img_dir, img_id + self.img_suffix)
+        mask_name = osp.join(self.data_root, self.mask_dir, img_id + self.mask_suffix)
+
+        img = Image.open(img_name).convert('RGB')
+        mask = Image.open(mask_name).convert('L')
+
+        if self.transform:
+            img, mask = self.transform(img, mask)
+
+        img = torch.from_numpy(img).permute(2, 0, 1).float()
+        mask = torch.from_numpy(mask).long()
+
+        results = {'img': img, 'gt_semantic_seg': mask, 'img_id': img_id, 'img_type': 'unknown'}
+        return results
+
+    def __len__(self):
+        return len(self.img_ids)

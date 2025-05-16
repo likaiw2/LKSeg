@@ -1,3 +1,11 @@
-.DS_Store
-__pycache__/
-out/
+data/*
+model_weights/*
+wandb/*
+*.pyc
+__pycache__/*
+network/__pycache__/*
+network/datasets/__pycache__/*
+network/losses/__pycache__/*
+network/models/__pycache__/*
+tools/__pycache__/*
+out/*
