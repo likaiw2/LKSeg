@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
-from network.losses import *
-from network.datasets.loveda_dataset import *
-from network.models.SFANet import SFANet
+from tools.losses import *
+from data_reader.loveda_dataset import *
+from models.SFANet import SFANet
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime

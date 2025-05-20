@@ -451,11 +451,19 @@ class SFANet(nn.Module):
                  ):
         super().__init__()
 
-        self.backbone = timm.create_model(backbone_name, features_only=True, output_stride=32,
-                                          out_indices=(1, 2, 3, 4), pretrained=pretrained)
+        self.backbone = timm.create_model(backbone_name, 
+                                          features_only=True, 
+                                          output_stride=32,
+                                          out_indices=(1, 2, 3, 4), 
+                                          pretrained=pretrained)
+        
         encoder_channels = self.backbone.feature_info.channels()
 
-        self.decoder = Decoder(encoder_channels, decode_channels, dropout, window_size, num_classes)
+        self.decoder = Decoder(encoder_channels, 
+                               decode_channels, 
+                               dropout, 
+                               window_size, 
+                               num_classes)
 
     def forward(self, x):
         h, w = x.size()[-2:]

@@ -29,7 +29,7 @@ def get_args():
     arg("-c", "--config_path", type=Path, help="Path to the config.", 
         # required=True,
         # default='config/loveda/sfanet.py',
-        default='config/earthvqa/sfanet.py',
+        default='config/earthvqa-sfanet.py',
         )
     return parser.parse_args()
 
@@ -60,6 +60,7 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
 
         total_loss += loss.item()
         pred_mask = nn.Softmax(dim=1)(pred[0]).argmax(dim=1)
+        
         for i in range(mask.size(0)):
             metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())
 
@@ -119,7 +120,7 @@ def main():
 
     # 训练/验证循环
     for epoch in range(1, config.max_epoch + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, config.loss, device,epoch)
+        train_loss = train_one_epoch(model, train_loader, optimizer, config.loss, device, epoch)
         val_loss,mIoU,OA = validate(model, val_loader, config.loss, device)
 
         if lr_scheduler is not None:

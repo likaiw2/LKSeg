@@ -1,4 +1,4 @@
-from .transform import *
+from transform import *
 import os
 import os.path as osp
 import numpy as np
@@ -9,11 +9,22 @@ import albumentations as albu
 from PIL import Image
 import random
 
-CLASSES = ('background', 'building', 'road', 'water', 'barren', 'forest',
-           'agricultural', 'playground', 'pond')
 
-PALETTE = [[255, 255, 255], [255, 0, 0], [255, 255, 0], [0, 0, 255],
-           [159, 129, 183], [0, 255, 0], [255, 195, 128], [165, 0, 165], [0, 185, 246]]
+COLOR_MAP = dict(
+    nothing=(0, 0, 0),              # 0 black
+    Background=(255, 255, 255),     # 1 white
+    Building=(255, 0, 0),           # 2 red
+    Road=(255, 255, 0),             # 3 yellow
+    Water=(0, 0, 255),              # 4 blue
+    Barren=(159, 129, 183),         # 5 purple
+    Forest=(0, 255, 0),             # 6 green
+    Agricultural=(255, 195, 128),   # 7 orange
+    Playground=(165,0,165),         # 8 pink
+    Pond=(0,185,246),               # 9 cyan
+)
+
+CLASSES = list(COLOR_MAP.keys())
+PALETTE = list(COLOR_MAP.values())
 
 ORIGIN_IMG_SIZE = (1024, 1024)
 

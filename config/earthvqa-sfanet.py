@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
-from network.losses import *
-from network.datasets.earthvqa_dataset import *
-from network.models.SFANet import SFANet
+from tools.losses import *
+from data_reader.earthvqa_dataset import *
+from models.SFANet import SFANet
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
@@ -80,11 +80,13 @@ def train_aug(img, mask):
 
 # train_dataset = earthvqaTrainDataset(transform=train_aug, data_root='data/earthvqa/train_val')
 train_dataset = EarthVQADataset(transform=train_aug, 
-                                   data_root='data/EarthVQA/Train')
+                                data_root='data/EarthVQA/Train'
+                                )
 
-val_dataset = EarthVQADataset(data_root='data/EarthVQA/Val', 
-                                #  mosaic_ratio=0.0,
-                                 transform=val_aug)
+val_dataset = EarthVQADataset(transform=val_aug,
+                              data_root='data/EarthVQA/Val', 
+                              # mosaic_ratio=0.0,
+                              )
 
 # test_dataset = earthvqaTestDataset()
 test_dataset = val_dataset
