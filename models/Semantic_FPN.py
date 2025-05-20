@@ -181,7 +181,7 @@ class AssymetricDecoder(nn.Module):
 # =====================================================
 
 
-class SemanticFPN(nn.Module):
+class Semantic_FPN(nn.Module):
     """
     将 Encoder → FPN → Decoder → SegHead 串联起来的完整语义分割模型
     """
@@ -258,3 +258,18 @@ class SemanticFPN(nn.Module):
         logits = self.seg_head(decoded)
         
         return logits
+    
+    
+if __name__ == "__main__":
+    # 测试模型
+    model = Semantic_FPN(num_classes=8)
+    x = torch.randn(1, 3, 512, 512)
+    output = model(x)
+    print(output.shape)  # 应该是 (1, 7, 512, 512)
+    # 测试损失函数
+    target = torch.randint(0, 8, (1, 512, 512))
+    loss = model.loss_fn(output, target)
+    print(loss.item())  # 打印损失值
+    # 测试模型的前向传播
+    output = model(x)
+    print(output.shape)  # 应该是 (1, num_classes, 512, 512)

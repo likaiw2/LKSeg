@@ -157,11 +157,10 @@ class LoveDATrainDataset(Dataset):
         
         img = Image.open(img_path).convert('RGB')
         mask = Image.open(mask_path).convert('L')
+        
         mask_np = np.array(mask)
-
-        mask_np[mask_np == 0] = 8
+        mask_np[mask_np == 0] = len(CLASSES)  # 将背景标记为255
         mask_np -= 1
-
         mask = Image.fromarray(mask_np)
         
         return img, mask
@@ -206,11 +205,11 @@ if __name__ == '__main__':
     
     print("########")
     sample = train_dataset[0]
-    # print(sample['img'].size())
-    # print(sample['gt_semantic_seg'].size())
-    # print(sample['gt_semantic_seg'].unique())
-    # print(sample['img_id'])
-    # print(sample['img_type'])
+    print(sample['img'].size())
+    print(sample['gt_semantic_seg'].size())
+    print(sample['gt_semantic_seg'].unique())
+    print(sample['img_id'])
+    print(sample['img_type'])
     print("########")
     
 

@@ -52,6 +52,8 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
         img = batch['img'].to(device)
         mask = batch['gt_semantic_seg'].to(device)
 
+        print(f"img.shape: {img.shape}, mask.shape: {mask.shape}")
+        
         optimizer.zero_grad()
         pred = model(img)
         loss = loss_fn(pred, mask)
@@ -121,7 +123,9 @@ def main():
     # 训练/验证循环
     for epoch in range(1, config.max_epoch + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, config.loss, device, epoch)
-        val_loss,mIoU,OA = validate(model, val_loader, config.loss, device)
+        
+        if epoch % config.check_val_every_n_epoch == 0:
+            val_loss,mIoU,OA = validate(model, val_loader, config.loss, device)
 
         if lr_scheduler is not None:
             lr_scheduler.step()

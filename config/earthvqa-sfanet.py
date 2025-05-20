@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
 from data_reader.earthvqa_dataset import *
-from models.SFANet import SFANet
+from models.Semantic_FPN import Semantic_FPN
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
@@ -9,6 +9,7 @@ present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 # training hparam
 max_epoch = 45
+check_val_every_n_epoch = 5
 ignore_index = len(CLASSES)
 train_batch_size = 8
 val_batch_size = 8
@@ -29,15 +30,15 @@ monitor_mode = 'max'
 save_top_k = 1
 save_last = True
 check_val_every_n_epoch = 5
-# pretrained_ckpt_path = None
-pretrained_ckpt_path = "/home/liw324/code/Segment/SFA-Net/model_weights/earthvqa/sfanet_20250507_231832/sfanet_best.pth" # the path for the pretrained model weight
+pretrained_ckpt_path = None
+# pretrained_ckpt_path = "/home/liw324/code/Segment/SFA-Net/model_weights/earthvqa/sfanet_20250507_231832/sfanet_best.pth" # the path for the pretrained model weight
 gpus = 'auto'  # default or gpu ids:[0] or gpu nums: 2, more setting can refer to pytorch_lightning
 resume_ckpt_path = None #"model_weights/earthvqa/delta-0817l0.8lr/delta-0817l0.8lr.ckpt"  # whether continue training with the checkpoint, default None
 # strategy = 'None'
 strategy = 'ddp'  # default None, if you want to use ddp, please set the gpus to 2 or more
 
 #  define the network
-net = SFANet(num_classes=num_classes)
+net = Semantic_FPN(num_classes=num_classes)
 
 # define the loss
 loss = UnetFormerLoss(ignore_index=ignore_index)
@@ -85,7 +86,6 @@ train_dataset = EarthVQADataset(transform=train_aug,
 
 val_dataset = EarthVQADataset(transform=val_aug,
                               data_root='data/EarthVQA/Val', 
-                              # mosaic_ratio=0.0,
                               )
 
 # test_dataset = earthvqaTestDataset()

@@ -11,7 +11,7 @@ import random
 
 
 COLOR_MAP = dict(
-    nothing=(0, 0, 0),              # 0 black
+    # nothing=(0, 0, 0),              # 0 black
     Background=(255, 255, 255),     # 1 white
     Building=(255, 0, 0),           # 2 red
     Road=(255, 255, 0),             # 3 yellow
@@ -48,8 +48,14 @@ def train_aug(img, mask):
     return img, mask
 
 class EarthVQADataset(Dataset):
-    def __init__(self, data_root='data/EarthVQA/Train', img_dir='images_png', mask_dir='masks_png',
-                 img_suffix='.png', mask_suffix='.png', transform=train_aug, img_size=ORIGIN_IMG_SIZE):
+    def __init__(self, data_root='data/EarthVQA/Train', 
+                 img_dir='images_png', 
+                 mask_dir='masks_png',
+                 img_suffix='.png', 
+                 mask_suffix='.png', 
+                 transform=train_aug, 
+                 img_size=ORIGIN_IMG_SIZE):
+        
         self.data_root = data_root
         self.img_dir = img_dir
         self.mask_dir = mask_dir
@@ -74,6 +80,11 @@ class EarthVQADataset(Dataset):
         img = Image.open(img_name).convert('RGB')
         mask = Image.open(mask_name).convert('L')
 
+        mask_np = np.array(mask)
+        mask_np[mask_np == 0] = len(CLASSES)  # 将背景标记为255
+        mask_np -= 1
+        mask = Image.fromarray(mask_np)
+        
         if self.transform:
             img, mask = self.transform(img, mask)
 
@@ -85,3 +96,47 @@ class EarthVQADataset(Dataset):
 
     def __len__(self):
         return len(self.img_ids)
+    
+    
+    
+    
+if __name__ == '__main__':
+    # Example usage
+    train_dataset = EarthVQADataset(data_root='/home/liw324/code/Segment/LKSeg/data/EarthVQA/Train')
+    
+    print("########")
+    sample = train_dataset[0]
+    print(sample['img'].size())
+    print(sample['gt_semantic_seg'].size())
+    print(sample['gt_semantic_seg'].unique())
+    print(sample['img_id'])
+    print(sample['img_type'])
+    print("########")
+    
+
+    image_path = f"/home/liw324/code/Segment/LKSeg/data/EarthVQA/Train/masks_png/{sample['img_id']}.png"
+    np_image = np.array(Image.open(image_path))
+    print("ori_mask",np.unique(np_image))
+    
+    # import torchvision.transforms.functional as F
+    # from torchvision.utils import save_image
+    # from PIL import Image
+
+    # # 获取样本
+    # # sample = train_dataset[0]
+    # img_tensor = sample['img']             # (3, H, W), float32
+    # mask_tensor = sample['gt_semantic_seg']  # (H, W), long
+
+    # # 保存图像（输入图像），转为 0-255 范围
+    # save_image(img_tensor, f"sample{sample['img_id']}_img.png")
+
+    # # 保存 mask（标签图）
+    # # 将语义标签转换为可视图像
+    # mask_np = mask_tensor.numpy().astype(np.uint8)
+    # color_map = np.array(PALETTE, dtype=np.uint8)  # shape: (7, 3)
+    # color_mask = color_map[mask_np]                # (H, W, 3)
+
+    # # 保存为PNG图像
+    # Image.fromarray(color_mask).save(f"sample{sample['img_id']}_mask.png")
+    
+    
