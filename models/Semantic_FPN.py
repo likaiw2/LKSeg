@@ -239,8 +239,11 @@ class Semantic_FPN(nn.Module):
             nn.UpsamplingBilinear2d(scale_factor=4)
         )
 
-        # 5. 损失函数
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index)
+        # 5. Auxiliary Segmentation Head
+        self.aux_head = nn.Sequential(
+            nn.Conv2d(decoder_out_channels, num_classes, kernel_size=1),
+            nn.UpsamplingBilinear2d(scale_factor=4)
+        )
 
     def forward(self, x):
         # Backbone
@@ -257,18 +260,31 @@ class Semantic_FPN(nn.Module):
         # SegHead
         logits = self.seg_head(decoded)
         
-        return logits
+        if self.training:
+            # 训练模式下，计算辅助分支
+            aux_logits = self.aux_head(decoded)
+            return logits, aux_logits
+        else:
+            aux_logits = None
+            return logits
+
     
     
 if __name__ == "__main__":
     # 测试模型
+    from tools.losses import *
+    
+    # 测试模型
     model = Semantic_FPN(num_classes=8)
+    model.eval()
     x = torch.randn(1, 3, 512, 512)
     output = model(x)
-    print(output.shape)  # 应该是 (1, 7, 512, 512)
+    print(output.shape)
     # 测试损失函数
     target = torch.randint(0, 8, (1, 512, 512))
-    loss = model.loss_fn(output, target)
+    
+    loss_fn = UnetFormerLoss(ignore_index=8)
+    loss = loss_fn(output, target)
     print(loss.item())  # 打印损失值
     # 测试模型的前向传播
     output = model(x)

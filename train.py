@@ -51,8 +51,6 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
     for batch in tqdm(loader, desc=f"Train Epoch {epoch}"):
         img = batch['img'].to(device)
         mask = batch['gt_semantic_seg'].to(device)
-
-        print(f"img.shape: {img.shape}, mask.shape: {mask.shape}")
         
         optimizer.zero_grad()
         pred = model(img)
@@ -60,6 +58,8 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
         loss.backward()
         optimizer.step()
 
+        # print(f"img.shape: {img.shape}, mask.shape: {mask.shape}, pred.shape: {pred.shape}")
+        
         total_loss += loss.item()
         pred_mask = nn.Softmax(dim=1)(pred[0]).argmax(dim=1)
         

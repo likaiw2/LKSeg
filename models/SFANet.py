@@ -474,18 +474,22 @@ class SFANet(nn.Module):
             return x, ah
         else:
             x = self.decoder(enc1, enc2, enc3, enc4, h, w)
-            return 
+            return x
         
 if __name__ == "__main__":
+    from tools.losses import *
+    
     # 测试模型
     model = SFANet(num_classes=6)
+    model.eval()
     x = torch.randn(1, 3, 512, 512)
     output = model(x)
-    print(output.shape)  # 应该是 (1, 7, 512, 512)
+    print("ourput.shape:",output.shape)  # 应该是 (1, 7, 512, 512)
     # 测试损失函数
     target = torch.randint(0, 6, (1, 512, 512))
-    loss = model.loss_fn(output, target)
-    print(loss.item())  # 打印损失值
+    
+    loss_fn = UnetFormerLoss(ignore_index=6)
+    loss = loss_fn(output, target)
+    # print(loss.item())  # 打印损失值
     # 测试模型的前向传播
     output = model(x)
-    print(output.shape)  # 应该是 (1, num_classes, 512, 512)

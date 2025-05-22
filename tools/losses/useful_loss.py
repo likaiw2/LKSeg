@@ -77,10 +77,10 @@ class UnetFormerLoss(nn.Module):
                                    DiceLoss(smooth=0.05, ignore_index=ignore_index), 1.0, 1.0)
         self.aux_loss = SoftCrossEntropyLoss(smooth_factor=0.05, ignore_index=ignore_index)
 
-    def forward(self, logits, labels):
+    def forward(self, logits, labels, w_1 = 0.4):
         if self.training and len(logits) == 2:
             logit_main, logit_aux = logits
-            loss = self.main_loss(logit_main, labels) + 0.4 * self.aux_loss(logit_aux, labels)
+            loss = self.main_loss(logit_main, labels) + w_1 * self.aux_loss(logit_aux, labels)
         else:
             loss = self.main_loss(logits, labels)
 

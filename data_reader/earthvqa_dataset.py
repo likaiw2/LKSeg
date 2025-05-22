@@ -1,4 +1,4 @@
-from transform import *
+from .transform import *
 import os
 import os.path as osp
 import numpy as np
@@ -64,6 +64,7 @@ class EarthVQADataset(Dataset):
         self.transform = transform
         self.img_size = img_size
         self.img_ids = self.get_img_ids()
+        self.COLLOR_MAP = COLOR_MAP
 
     def get_img_ids(self):
         img_filename_list = os.listdir(osp.join(self.data_root, self.img_dir))
@@ -106,6 +107,7 @@ if __name__ == '__main__':
     
     print("########")
     sample = train_dataset[0]
+    print(len(train_dataset.COLLOR_MAP))
     print(sample['img'].size())
     print(sample['gt_semantic_seg'].size())
     print(sample['gt_semantic_seg'].unique())
