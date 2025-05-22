@@ -1,6 +1,14 @@
-# SFA-Net
-
-- This repository presents an architecture for urban scene segmentation in high-resolution remote sensing images, with support for both training and testing.
+# Notes
+- Since nn.CrossEntropyLoss requires that each useful pixel label should begain from 0, all the label should be `-1`
+    - so in original LoveDA data, there are 6 classes, the label are from 0-7, new label is still 0-7
+    - background : 1 --> 0
+    - building : 2 --> 1
+    - road : 3 --> 2
+    - water : 4 --> 3
+    - barren : 5 --> 4
+    - forest : 6 --> 5
+    - agricultural : 7 --> 6
+- and original 0 should be n
 
 ## Folder Structure
 
@@ -67,16 +75,4 @@ Configure the folder as shown in 'Folder Structure' above.
 - [catalyst](https://github.com/catalyst-team/catalyst)
 - [mmsegmentation](https://github.com/open-mmlab/mmsegmentation)
 - [GeoSeg](https://github.com/WangLibo1995/GeoSeg)
-
-# Notes
-- Since nn.CrossEntropyLoss requires that each useful pixel label should begain from 0, all the label should be `-1`
-    - so in original LoveDA data, there are 6 classes, the label are from 0-7, new label is still 0-7
-    - background : 1 --> 0
-    - building : 2 --> 1
-    - road : 3 --> 2
-    - water : 4 --> 3
-    - barren : 5 --> 4
-    - forest : 6 --> 5
-    - agricultural : 7 --> 6
-- and original 0 should be n
 
