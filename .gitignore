@@ -9,3 +9,4 @@ network/losses/__pycache__/*
 network/models/__pycache__/*
 tools/__pycache__/*
 out/*
+models/mask_proposer/__init__.py
