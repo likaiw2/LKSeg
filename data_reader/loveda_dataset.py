@@ -1,4 +1,4 @@
-from .transform import *
+from transform import *
 import os
 import os.path as osp
 import numpy as np
@@ -206,36 +206,35 @@ if __name__ == '__main__':
     print("########")
     sample = train_dataset[0]
     print(sample['img'].size())
-    print(sample['gt_semantic_seg'].size())
-    print(sample['gt_semantic_seg'].unique())
+    print(sample['gt_semantic_seg'].size(), sample['gt_semantic_seg'].unique())
     print(sample['img_id'])
     print(sample['img_type'])
     print("########")
     
 
-    image_path = f"/home/liw324/code/Segment/LKSeg/data/LoveDA/Train/{sample['img_type']}/masks_png/{sample['img_id']}.png"
-    np_image = np.array(Image.open(image_path))
-    print("ori_mask",np.unique(np_image))
+    # image_path = f"/home/liw324/code/Segment/LKSeg/data/LoveDA/Train/{sample['img_type']}/masks_png/{sample['img_id']}.png"
+    # np_image = np.array(Image.open(image_path))
+    # print("ori_mask",np.unique(np_image))
     
-    import torchvision.transforms.functional as F
-    from torchvision.utils import save_image
-    from PIL import Image
+    # import torchvision.transforms.functional as F
+    # from torchvision.utils import save_image
+    # from PIL import Image
 
-    # 获取样本
-    # sample = train_dataset[0]
-    img_tensor = sample['img']             # (3, H, W), float32
-    mask_tensor = sample['gt_semantic_seg']  # (H, W), long
+    # # 获取样本
+    # # sample = train_dataset[0]
+    # img_tensor = sample['img']             # (3, H, W), float32
+    # mask_tensor = sample['gt_semantic_seg']  # (H, W), long
 
-    # 保存图像（输入图像），转为 0-255 范围
-    save_image(img_tensor, f"sample{sample['img_id']}_img.png")
+    # # 保存图像（输入图像），转为 0-255 范围
+    # save_image(img_tensor, f"sample{sample['img_id']}_img.png")
 
-    # 保存 mask（标签图）
-    # 将语义标签转换为可视图像
-    mask_np = mask_tensor.numpy().astype(np.uint8)
-    color_map = np.array(PALETTE, dtype=np.uint8)  # shape: (7, 3)
-    color_mask = color_map[mask_np]                # (H, W, 3)
+    # # 保存 mask（标签图）
+    # # 将语义标签转换为可视图像
+    # mask_np = mask_tensor.numpy().astype(np.uint8)
+    # color_map = np.array(PALETTE, dtype=np.uint8)  # shape: (7, 3)
+    # color_mask = color_map[mask_np]                # (H, W, 3)
 
-    # 保存为PNG图像
-    Image.fromarray(color_mask).save(f"sample{sample['img_id']}_mask.png")
+    # # 保存为PNG图像
+    # Image.fromarray(color_mask).save(f"sample{sample['img_id']}_mask.png")
     
     

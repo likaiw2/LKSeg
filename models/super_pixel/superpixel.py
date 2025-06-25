@@ -45,7 +45,7 @@ class SuperpixelExtractor:
 
         self.parameters_dict = parameters_dict
 
-    def __call__(self, images):
+    def __call__(self, images,parameters_dict=None):
         """
         Args:
             images (torch.Tensor): [B, C, H, W]
@@ -60,6 +60,9 @@ class SuperpixelExtractor:
             assigned_masks_batch: torch.Tensor [BATCH_SIZE, IMAGE_HEIGHT, IMAGE_WIDTH]
                 Indicates for each pixel which mask it is assigned to.
         """
+        if parameters_dict is not None:
+            self.parameters_dict = parameters_dict
+
         pred_masks_batch = []
         n_pred_masks = []
         assigned_masks_batch = []

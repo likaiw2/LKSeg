@@ -4,6 +4,17 @@ felzenszwalb_parameters_dict = {
     "min_size": 400,  # Minimum component size. Enforced using postprocessing.
 }
 
+# slic_parameters_dict = {
+#     "n_segments": 200,  # 100  # The (approximate) number of labels in the segmented output image.
+#     "compactness": 10,
+#     # Balances color proximity and space proximity. Higher values give more weight to space proximity, making superpixel shapes more square/cubic. We recommend exploring possible values on a log scale, e.g., 0.01, 0.1, 1, 10, 100, before refining around a chosen value.
+#     "sigma": 1,  # 0,  # Width of Gaussian smoothing kernel for pre-processing for each dimension of the image.
+#     "start_label": 0,
+#     "min_size_factor": 0.5,  # Proportion of the minimum segment size to be removed with respect to the supposed segment size `depth*width*height/n_segments`
+#     "max_num_iter": 10,  # Maximum number of iterations of k-means
+#     "enforce_connectivity": True,  # Whether the generated segments are connected or not
+# }
+
 slic_parameters_dict = {
     "n_segments": 200,  # 100  # The (approximate) number of labels in the segmented output image.
     "compactness": 10,
