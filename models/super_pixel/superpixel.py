@@ -6,7 +6,7 @@ from skimage.filters import sobel
 from skimage.measure import regionprops
 from skimage.segmentation import felzenszwalb, slic, quickshift, watershed
 
-from superpixel_configs import felzenszwalb_parameters_dict, slic_parameters_dict, quickshift_parameters_dict, watershed_parameters_dict, seeds_parameters_dict
+from .superpixel_configs import felzenszwalb_parameters_dict, slic_parameters_dict, quickshift_parameters_dict, watershed_parameters_dict, seeds_parameters_dict
 
 class SuperpixelExtractor:
     """Proposes class-agnostic masks for the given images using superpixels.

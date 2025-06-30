@@ -29,7 +29,8 @@ def get_args():
     arg("-c", "--config_path", type=Path, help="Path to the config.", 
         # required=True,
         # default='config/loveda/sfanet.py',
-        default='config/earthvqa-sfanet.py',
+        # default='config/earthvqa-sfanet.py',
+        default='config/loveda-spsam.py',
         )
     return parser.parse_args()
 
@@ -53,15 +54,17 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
         mask = batch['gt_semantic_seg'].to(device)
         
         optimizer.zero_grad()
-        pred = model(img)
-        loss = loss_fn(pred, mask)
+        outputs = model(img)
+        pred_logits = outputs["pred_logits"]
+        pred_masks = outputs["pred_masks"]
+        loss = loss_fn(pred_logits, mask)
         loss.backward()
         optimizer.step()
 
         # print(f"img.shape: {img.shape}, mask.shape: {mask.shape}, pred.shape: {pred.shape}")
         
         total_loss += loss.item()
-        pred_mask = nn.Softmax(dim=1)(pred[0]).argmax(dim=1)
+        pred_mask = nn.Softmax(dim=1)(pred_logits[0]).argmax(dim=1)
         
         for i in range(mask.size(0)):
             metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())
@@ -81,11 +84,13 @@ def validate(model, loader, loss_fn, device):
             img = batch['img'].to(device)
             mask = batch['gt_semantic_seg'].to(device)
 
-            pred = model(img)
-            loss = loss_fn(pred, mask)
+            outputs = model(img)
+            pred_logits = outputs["pred_logits"]
+            pred_masks = outputs["pred_masks"]
+            loss = loss_fn(pred_logits, mask)
             total_loss += loss.item()
 
-            pred_mask = nn.Softmax(dim=1)(pred).argmax(dim=1)
+            pred_mask = nn.Softmax(dim=1)(pred_logits).argmax(dim=1)
             for i in range(mask.size(0)):
                 metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())
 
@@ -120,12 +125,17 @@ def main():
     train_loader = config.train_loader
     val_loader = config.val_loader
 
+    # 初始化验证指标
+    val_loss = 0
+    mIoU = 0
+    OA = 0
+
     # 训练/验证循环
     for epoch in range(1, config.max_epoch + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, config.loss, device, epoch)
         
         if epoch % config.check_val_every_n_epoch == 0:
-            val_loss,mIoU,OA = validate(model, val_loader, config.loss, device)
+            val_loss, mIoU, OA = validate(model, val_loader, config.loss, device)
 
         if lr_scheduler is not None:
             lr_scheduler.step()
