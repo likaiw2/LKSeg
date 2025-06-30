@@ -152,10 +152,10 @@ dependencies:
       - threadpoolctl==3.6.0
       - tifffile==2024.8.30
       - timm==1.0.15
-      - torch==2.6.0+cu118
-      - torchaudio==2.6.0+cu118
+      # - torch==2.6.0+cu118
+      # - torchaudio==2.6.0+cu118
       - torchmetrics==1.7.1
-      - torchvision==0.21.0+cu118
+      # - torchvision==0.21.0+cu118
       - tqdm==4.67.1
       - triton==3.2.0
       - ttach==0.0.3

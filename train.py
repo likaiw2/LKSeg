@@ -45,7 +45,7 @@ class Supervision_Train(nn.Module):
         seg_pre = self.net(x)
         return seg_pre
 
-def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
+def train_one_epoch(model, loader, optimizer, loss_fn, device, epoch):
     model.train()
     total_loss = 0
     metrics = Evaluator(num_class=model.config.num_classes)
@@ -55,16 +55,36 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device,epoch):
         
         optimizer.zero_grad()
         outputs = model(img)
-        pred_logits = outputs["pred_logits"]
-        pred_masks = outputs["pred_masks"]
-        loss = loss_fn(pred_logits, mask)
+        
+        # Handle SPSam output format
+        if isinstance(outputs, dict):
+            pred_logits = outputs["pred_logits"]
+            
+            # Check if aux_logits is available (during training)
+            if "aux_logits" in outputs:
+                # Format for UnetFormerLoss: (main_logits, aux_logits)
+                logits_for_loss = (pred_logits, outputs["aux_logits"])
+            else:
+                logits_for_loss = pred_logits
+        else:
+            # For other model types that might return logits directly or as a tuple
+            logits_for_loss = outputs
+        
+        # Pass to loss function
+        loss = loss_fn(logits_for_loss, mask)
+        
         loss.backward()
         optimizer.step()
-
-        # print(f"img.shape: {img.shape}, mask.shape: {mask.shape}, pred.shape: {pred.shape}")
         
         total_loss += loss.item()
-        pred_mask = nn.Softmax(dim=1)(pred_logits[0]).argmax(dim=1)
+        
+        # For metrics, always use the main prediction
+        if isinstance(logits_for_loss, tuple):
+            pred_mask = nn.Softmax(dim=1)(logits_for_loss[0]).argmax(dim=1)
+        elif isinstance(outputs, dict) and "pred_logits" in outputs:
+            pred_mask = nn.Softmax(dim=1)(outputs["pred_logits"]).argmax(dim=1)
+        else:
+            pred_mask = nn.Softmax(dim=1)(logits_for_loss).argmax(dim=1)
         
         for i in range(mask.size(0)):
             metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())

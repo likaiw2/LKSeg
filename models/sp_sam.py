@@ -140,6 +140,15 @@ class SPSam(nn.Module):
         # 创建mask_decoder实例
         self.mask_decoder = mask_decoder(transformer_dim=transformer_dim, num_classes=self.num_classes)
         
+        # 添加辅助头 (Auxiliary Head)
+        self.aux_head = nn.Sequential(
+            nn.Conv2d(transformer_dim, transformer_dim // 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(transformer_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.1),
+            nn.Conv2d(transformer_dim // 2, self.num_classes, kernel_size=1)
+        )
+        
         self.superpixel_extractor = SuperpixelExtractor("slic")
         
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
@@ -175,8 +184,14 @@ class SPSam(nn.Module):
         num_masks = sp_masks.shape[0]
         mask_prompt = sp_masks.unsqueeze(0).repeat(batch_size, 1, 1, 1).float().to(images.device)
         
+        # 4. 获取图像特征
         image_embeddings = self.image_encoder(preprocessed_images)
 
+        # 5. 生成辅助预测
+        # 使用图像特征生成辅助预测
+        aux_logits = self.aux_head(image_embeddings)
+        
+        # 6. 处理提示编码
         if (point_coords is not None and point_labels is not None) or boxes is not None:
             sparse_embeddings, dense_embeddings = self.prompt_encoder(
                 points=(point_coords, point_labels) if point_coords is not None else None,
@@ -186,13 +201,19 @@ class SPSam(nn.Module):
         else:
             sparse_embeddings = None
 
+        # 7. 解码生成主要预测
         outputs = self.mask_decoder(
             image_embeddings=image_embeddings,
             image_pe=self.prompt_encoder.get_dense_pe(),
             prompt_embeddings=sparse_embeddings,
         )
-
-        return outputs
+        
+        # 8. 在训练模式下返回主要预测和辅助预测
+        if self.training:
+            outputs["aux_logits"] = aux_logits
+            return outputs
+        else:
+            return outputs
 
 
 # ======= 测试代码示例：三种 Prompt 联合输入 + 可视化 =======
