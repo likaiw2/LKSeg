@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
 from data_reader.loveda_dataset import LoveDATrainDataset,CLASSES
-from models.sp_sam import SPSam
+from models.SPSam import SPSam
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
@@ -10,8 +10,8 @@ present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 # training hparam
 max_epoch = 45
 ignore_index = len(CLASSES)
-train_batch_size = 2
-val_batch_size = 2
+train_batch_size = 4
+val_batch_size = 4
 lr = 9e-3
 weight_decay = 0.01
 backbone_lr = 0.001
@@ -39,8 +39,9 @@ resume_ckpt_path = None #"model_weights/loveda/delta-0817l0.8lr/delta-0817l0.8lr
 net = SPSam(num_classes=num_classes)
 
 # define the loss
-loss = UnetFormerLoss(ignore_index=ignore_index)
-use_aux_loss = True
+from tools.losses import QuerySegmentationLoss
+loss = QuerySegmentationLoss(num_classes=num_classes, ignore_index=ignore_index)
+use_aux_loss = False  # 设置为False，因为我们现在只有一条预测路径
 
 
 # train_dataset = LoveDATrainDataset(transform=train_aug, data_root='data/LoveDA/train_val')

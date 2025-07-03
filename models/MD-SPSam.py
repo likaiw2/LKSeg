@@ -21,9 +21,10 @@ class SPSamDecoder(nn.Module):
         mask_dim: int = 256,
     ):
         super().__init__()
-        
+
+        self.num_classes = num_classes
         self.query_embed = nn.Embedding(num_queries, transformer_dim)
-        
+
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=transformer_dim,
             nhead=num_heads,
@@ -34,24 +35,47 @@ class SPSamDecoder(nn.Module):
             decoder_layer=decoder_layer,
             num_layers=num_transformer_layers
         )
-        
+
         self.class_embed = nn.Linear(transformer_dim, num_classes + 1)
         self.mask_embed = MLP(transformer_dim, mask_dim, mask_dim, 3)
         self.mask_predictor = nn.Conv2d(mask_dim, mask_dim, kernel_size=1)
+
+        # 添加像素级分割头
+        self.pixel_decoder = nn.Sequential(
+            nn.Conv2d(transformer_dim, transformer_dim // 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(transformer_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(transformer_dim // 2, num_classes, kernel_size=1)
+        )
 
     def forward(
         self,
         image_embeddings: torch.Tensor,
         image_pe: torch.Tensor,
         prompt_embeddings: torch.Tensor,
+        target_size: tuple = None,
     ) -> dict:
         bs = image_embeddings.shape[0]
         h, w = image_embeddings.shape[-2:]
-        
+
+        # 生成像素级分割预测
+        pixel_logits = self.pixel_decoder(image_embeddings)
+
+        # 上采样到目标分辨率
+        if target_size is None:
+            target_size = (512, 512)  # 默认尺寸
+        pixel_logits = F.interpolate(
+            pixel_logits,
+            size=target_size,
+            mode='bilinear',
+            align_corners=False
+        )
+
+        # 为了保持与原始实现的兼容性，也生成查询级别的预测
         image_embeddings_flat = image_embeddings.flatten(2).permute(0, 2, 1)  # B, HW, C
-        
+
         queries = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
-        
+
         # 融合 Prompt token
         if prompt_embeddings is not None and prompt_embeddings.shape[1] > 0:
             queries = torch.cat([prompt_embeddings, queries], dim=1)
@@ -60,12 +84,11 @@ class SPSamDecoder(nn.Module):
             tgt=queries,
             memory=image_embeddings_flat,
         )
-        
+
         outputs_class = self.class_embed(decoder_output)
         mask_features = self.mask_embed(decoder_output)
 
         image_embeddings_proc = self.mask_predictor(image_embeddings)
-        image_embeddings_proc_flat = image_embeddings_proc.flatten(2)  # B, C, HW
 
         masks = torch.einsum(
             "bqc,bchw->bqhw",
@@ -74,8 +97,9 @@ class SPSamDecoder(nn.Module):
         )
 
         return {
-            "pred_logits": outputs_class,
+            "pred_logits": pixel_logits,  # 现在返回像素级别的预测
             "pred_masks": masks,
+            "query_logits": outputs_class,  # 保留查询级别的预测
         }
 
 class MLP(nn.Module):
@@ -112,18 +136,18 @@ class SPSam(nn.Module):
         # 创建image_encoder实例
         if image_encoder_args is None:
             image_encoder_args = {
-                "depth": 12,
-                "embed_dim": 768,
-                "img_size": self.img_size,
-                "mlp_ratio": 4,
-                "norm_layer": nn.LayerNorm,
-                "num_heads": 12,
-                "patch_size": 16,
-                "qkv_bias": True,
-                "use_rel_pos": True,
-                "global_attn_indexes": [2, 5, 8, 11],
-                "window_size": 14,
-                "out_chans": transformer_dim,
+                "depth": 6,                    # 减少Transformer层数，从12降到6，减少计算量
+                "embed_dim": 512,              # 降低嵌入维度，从768降到512，减少内存占用
+                "img_size": self.img_size,     # 保持图像大小不变
+                "mlp_ratio": 4,                # MLP扩展比例，保持不变
+                "norm_layer": nn.LayerNorm,    # 标准化层，保持不变
+                "num_heads": 8,                # 注意力头数，从12降到8，与embed_dim匹配
+                "patch_size": 16,              # 图像分块大小，保持不变
+                "qkv_bias": True,              # 使用偏置项，保持不变
+                "use_rel_pos": True,           # 使用相对位置编码，保持不变
+                "global_attn_indexes": [1, 3, 5],  # 全局注意力层的索引，减少并调整
+                "window_size": 14,             # 窗口大小，保持不变
+                "out_chans": transformer_dim,  # 输出通道数，保持不变
             }
         self.image_encoder = ImageEncoderViT(**image_encoder_args)
         
@@ -167,33 +191,43 @@ class SPSam(nn.Module):
         return x
 
     def forward(self, images, point_coords=None, point_labels=None, boxes=None):
-        
-        # 1. 预处理后的图像尺寸
+
         preprocessed_images = self.preprocess(images)
 
-        # 2. 提取superpixel mask，注意输入需要归一化到0~1
+        original_h, original_w = images.shape[-2:]
+        target_size = (original_h, original_w)
+
+        # 提取superpixel mask，注意输入需要归一化到0~1
         images_for_sp = images.clone()
         images_for_sp = torch.clamp(images_for_sp / 255.0, 0, 1)
 
         sp_masks, _, _, _ = self.superpixel_extractor(images_for_sp)
 
-        # 3. 处理superpixel mask，生成mask prompt
-        # 这里简单假设每个superpixel对应一个mask prompt
+        # 处理superpixel mask，生成mask prompt
+        # 每个superpixel对应一个mask prompt
         # sp_masks: [NUM_MASKS, H, W]，我们转为[B, NUM_MASKS, H, W]
         batch_size = images.shape[0]
-        num_masks = sp_masks.shape[0]
-        mask_prompt = sp_masks.unsqueeze(0).repeat(batch_size, 1, 1, 1).float().to(images.device)
-        
-        # 4. 获取图像特征
+        if sp_masks.numel() > 0:  # 检查是否有superpixel masks
+            mask_prompt = sp_masks.unsqueeze(0).repeat(batch_size, 1, 1, 1).float().to(images.device)
+        else:
+            mask_prompt = None
+
+        # 获取图像特征
         image_embeddings = self.image_encoder(preprocessed_images)
 
-        # 5. 生成辅助预测
-        # 使用图像特征生成辅助预测
+        # 生成辅助预测
+        # 使用图像特征生成辅助预测，并上采样到目标尺寸
         aux_logits = self.aux_head(image_embeddings)
-        
-        # 6. 处理提示编码
+        aux_logits = F.interpolate(
+            aux_logits,
+            size=target_size,
+            mode='bilinear',
+            align_corners=False
+        )
+
+        # 处理提示编码
         if (point_coords is not None and point_labels is not None) or boxes is not None:
-            sparse_embeddings, dense_embeddings = self.prompt_encoder(
+            sparse_embeddings, _ = self.prompt_encoder(
                 points=(point_coords, point_labels) if point_coords is not None else None,
                 boxes=boxes,
                 masks=mask_prompt,
@@ -201,14 +235,15 @@ class SPSam(nn.Module):
         else:
             sparse_embeddings = None
 
-        # 7. 解码生成主要预测
+        # 解码生成主要预测
         outputs = self.mask_decoder(
             image_embeddings=image_embeddings,
             image_pe=self.prompt_encoder.get_dense_pe(),
             prompt_embeddings=sparse_embeddings,
+            target_size=target_size,
         )
-        
-        # 8. 在训练模式下返回主要预测和辅助预测
+
+        # 在训练模式下返回主要预测和辅助预测
         if self.training:
             outputs["aux_logits"] = aux_logits
             return outputs
@@ -218,65 +253,3 @@ class SPSam(nn.Module):
 
 # ======= 测试代码示例：三种 Prompt 联合输入 + 可视化 =======
 if __name__ == "__main__":
-    from segment_anything.modeling import ImageEncoderViT, PromptEncoder
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    image_encoder = ImageEncoderViT(
-        depth=12,
-        embed_dim=768,
-        img_size=1024,
-        mlp_ratio=4,
-        norm_layer=nn.LayerNorm,
-        num_heads=12,
-        patch_size=16,
-        qkv_bias=True,
-        use_rel_pos=True,
-        global_attn_indexes=[2, 5, 8, 11],
-        window_size=14,
-        out_chans=256,
-    ).to(device)
-
-    prompt_encoder = PromptEncoder(
-        embed_dim=256,
-        image_embedding_size=(64, 64),
-        input_image_size=(1024, 1024),
-        mask_in_chans=16,
-    ).to(device)
-
-    mask_decoder = SPSamDecoder(transformer_dim=256, num_classes=6).to(device)
-
-    model = SPSam(image_encoder, prompt_encoder, mask_decoder).to(device)
-    model.eval()
-
-    # 构造随机图像
-    dummy_image = torch.randn(1, 3, 1024, 1024).to(device)
-
-    # 构造 Point Prompt
-    point_coords = torch.tensor([[[512, 512]]], dtype=torch.float, device=device)
-    point_labels = torch.tensor([[1]], dtype=torch.int, device=device)
-
-    # 构造 Box Prompt
-    boxes = torch.tensor([[[256, 256, 768, 768]]], dtype=torch.float, device=device)
-
-    # 构造 Mask Prompt
-    mask_inputs = torch.zeros(1, 1, 1024, 1024, device=device)
-    mask_inputs[:, :, 300:700, 300:700] = 1.0
-
-    # 推理
-    with torch.no_grad():
-        outputs = model(dummy_image, point_coords, point_labels, boxes, mask_inputs)
-
-    print(f"类别预测 logits 形状: {outputs['pred_logits'].shape}")
-    print(f"掩码预测形状: {outputs['pred_masks'].shape}")
-
-    # 可视化前4个 mask 结果
-    pred_masks = outputs["pred_masks"].sigmoid().cpu().numpy()
-
-    for i in range(min(4, pred_masks.shape[1])):
-        plt.figure()
-        plt.imshow(dummy_image[0].permute(1, 2, 0).cpu().numpy(), alpha=0.5)
-        plt.imshow(pred_masks[0, i], cmap="jet", alpha=0.5)
-        plt.title(f"Mask {i}")
-        plt.axis("off")
-        plt.save()
