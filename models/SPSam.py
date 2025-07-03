@@ -185,45 +185,83 @@ class SPSam(nn.Module):
         images_for_sp = images.clone()
         images_for_sp = torch.clamp(images_for_sp / 255.0, 0, 1)
 
-        sp_masks, _, _, _ = self.superpixel_extractor(images_for_sp)
-
-        # 处理超像素掩码 - 修复掩码形状问题
+        sp_masks, n_pred_masks, _, _ = self.superpixel_extractor(images_for_sp)
+        
+        # 输出每个图像的超像素数量
         batch_size = images.shape[0]
-        sparse_embeddings = None
+        # for b in range(batch_size):
+            # print(f"Image {b}: {n_pred_masks[b]} superpixels")
+        
+        # 输出总超像素数量
+        # total_superpixels = sum(n_pred_masks)
+        # print(f"Total superpixels across batch: {total_superpixels}")
+        # print(f"Superpixel masks tensor shape: {sp_masks.shape}")
+        
+        # 处理超像素掩码 - 每个批次分别处理
+        all_sparse_embeddings = []
         
         # 检查是否有点或框提示
         has_point_prompt = point_coords is not None and point_labels is not None
         has_box_prompt = boxes is not None
         
-        # 如果有超像素掩码
-        if sp_masks.numel() > 0:
-            # 将超像素掩码转换为正确的形状 [B, 1, H, W]
-            # 每个批次只使用一个掩码（所有超像素合并）
-            combined_mask = (sp_masks.sum(0) > 0).float().unsqueeze(0).unsqueeze(0)
-            combined_mask = combined_mask.repeat(batch_size, 1, 1, 1).to(images.device)
+        # 为每个批次处理提示
+        for b in range(batch_size):
+            batch_sparse_embeddings = []
             
-            # 处理提示编码
+            # 1. 处理点和框提示（如果有）
             if has_point_prompt or has_box_prompt:
-                sparse_embeddings, _ = self.prompt_encoder(
-                    points=(point_coords, point_labels) if has_point_prompt else None,
-                    boxes=boxes,
-                    masks=combined_mask,
+                # 提取当前批次的点和框
+                batch_points = (
+                    point_coords[b:b+1] if has_point_prompt else None,
+                    point_labels[b:b+1] if has_point_prompt else None
                 )
-            else:
-                # 只有掩码提示
-                sparse_embeddings, _ = self.prompt_encoder(
-                    points=None,
-                    boxes=None,
-                    masks=combined_mask,
+                batch_boxes = boxes[b:b+1] if has_box_prompt else None
+                
+                # 获取点和框的嵌入
+                point_box_embeddings, _ = self.prompt_encoder(
+                    points=batch_points,
+                    boxes=batch_boxes,
+                    masks=None
                 )
+                batch_sparse_embeddings.append(point_box_embeddings)
+            
+            # 2. 处理超像素掩码提示
+            if sp_masks.numel() > 0:
+                # 计算当前批次的超像素掩码起始和结束索引
+                start_idx = sum(n_pred_masks[:b]) if b > 0 else 0
+                end_idx = start_idx + n_pred_masks[b]
+                
+                # print(f"Processing superpixels for image {b}: indices {start_idx} to {end_idx-1}")
+                
+                # 获取当前批次的超像素掩码
+                batch_sp_masks = sp_masks[start_idx:end_idx]
+                
+                # 为每个超像素掩码单独获取嵌入
+                for mask_idx in range(len(batch_sp_masks)):
+                    # 将单个超像素掩码转换为正确的形状 [1, 1, H, W]
+                    single_mask = batch_sp_masks[mask_idx].float().unsqueeze(0).unsqueeze(0).to(images.device)
+                    
+                    # 获取掩码嵌入
+                    mask_embeddings, _ = self.prompt_encoder(
+                        points=None,
+                        boxes=None,
+                        masks=single_mask
+                    )
+                    batch_sparse_embeddings.append(mask_embeddings)
+            
+            # 合并当前批次的所有嵌入
+            if batch_sparse_embeddings:
+                # 连接所有嵌入，形状为 [1, N, embed_dim]
+                batch_embeddings = torch.cat(batch_sparse_embeddings, dim=1)
+                all_sparse_embeddings.append(batch_embeddings)
+        
+        # 合并所有批次的嵌入
+        if all_sparse_embeddings:
+            sparse_embeddings = torch.cat(all_sparse_embeddings, dim=0)
+            # print(f"Final sparse embeddings shape: {sparse_embeddings.shape}")
         else:
-            # 没有超像素掩码，只处理点和框提示
-            if has_point_prompt or has_box_prompt:
-                sparse_embeddings, _ = self.prompt_encoder(
-                    points=(point_coords, point_labels) if has_point_prompt else None,
-                    boxes=boxes,
-                    masks=None,
-                )
+            sparse_embeddings = None
+            # print("No sparse embeddings generated")
 
         # 解码生成预测
         outputs = self.mask_decoder(

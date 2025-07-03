@@ -12,7 +12,8 @@ from tools.cfg import py2cfg
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-os.environ["WANDB_MODE"] = "offline"
+# os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
 
 
 def seed_everything(seed):
