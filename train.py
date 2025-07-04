@@ -11,9 +11,10 @@ import wandb
 from tools.cfg import py2cfg
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import pandas as pd
 
-# os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_MODE"] = "online"
+os.environ["WANDB_MODE"] = "offline"
+# os.environ["WANDB_MODE"] = "online"
 
 
 def seed_everything(seed):
@@ -36,38 +37,27 @@ def get_args():
         )
     return parser.parse_args()
 
-class Supervision_Train(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.net = config.net
-        self.loss = config.loss
-
-    def forward(self, x):
-        seg_pre = self.net(x)
-        return seg_pre
-
-def train_one_epoch(model, loader, optimizer, loss_fn, device, epoch):
+def train_one_epoch(config, model, loader, optimizer, loss_fn, device, epoch):
     model.train()
-    total_loss = 0
-    metrics = Evaluator(num_class=model.config.num_classes)
+    iter_loss_list = []
+    metrics = Evaluator(num_class=config.num_classes)
     first_batch = True
-    for batch in tqdm(loader, desc=f"Train Epoch {epoch}"):
+    
+    # 创建进度条
+    pbar = tqdm(loader, desc=f"Train Epoch {epoch}")
+    
+    for i, batch in enumerate(pbar):
         img = batch['img'].to(device)
         mask = batch['gt_semantic_seg'].to(device)
-
-        # Handle mask dimensions - remove extra channel dimension if present
-        if mask.dim() == 4 and mask.shape[1] == 1:
-            mask = mask.squeeze(1)  # Remove channel dimension: [B, 1, H, W] -> [B, H, W]
 
         optimizer.zero_grad()
         outputs = model(img)
 
-        # SPSam outputs a dictionary with pred_logits and pred_masks
+        # SPSam输出包含pred_logits和pred_masks的字典
         pred_logits = outputs["pred_logits"]  # [B, Q, C+1]
         pred_masks = outputs["pred_masks"]    # [B, Q, H, W]
 
-        # Debug information for first batch
+        # print first batch shape
         if first_batch:
             print(f"Image shape: {img.shape}")
             print(f"Mask shape: {mask.shape}")
@@ -75,25 +65,50 @@ def train_one_epoch(model, loader, optimizer, loss_fn, device, epoch):
             print(f"Pred masks shape: {pred_masks.shape}")
             first_batch = False
 
-        # Calculate loss - using a specialized loss for query-based segmentation
         loss = loss_fn(pred_logits, pred_masks, mask)
-        
+        assert torch.isfinite(loss),(f"Warning: Non-finite loss at batch {i}, value: {loss.item()}")
         loss.backward()
+        
+        # 添加梯度裁剪以提高稳定性
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        
         optimizer.step()
         
-        total_loss += loss.item()
+        batch_loss = loss.item()
+        iter_loss_list.append(batch_loss)
         
-        # Convert query predictions to semantic segmentation format for metrics
-        # This requires selecting the best mask for each pixel
+        # 更新进度条显示当前批次的损失
+        pbar.set_postfix({"batch_loss": f"{batch_loss:.4f}"})
+        
+        # 记录每个iteration的损失到wandb
+        wandb.log({
+            'iteration': epoch * len(loader) + i,
+            'batch_loss': batch_loss,
+            'learning_rate': optimizer.param_groups[0]['lr']
+        })
+        
+        # 转换查询预测为语义分割格式以计算指标
         pred_mask = get_semantic_seg_from_query_outputs(pred_logits, pred_masks)
         
-        for i in range(mask.size(0)):
-            metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())
+        for j in range(mask.size(0)):
+            metrics.add_batch(mask[j].cpu().numpy(), pred_mask[j].cpu().numpy())
 
-    avg_loss = total_loss / len(loader)
+    # 计算平均损失和指标
+    avg_loss = np.mean(iter_loss_list) if len(loader) > 0 else 0
     mIoU = np.nanmean(metrics.Intersection_over_Union())
     OA = np.nanmean(metrics.OA())
-    wandb.log({'train_loss': avg_loss, 'train_mIoU': mIoU, 'train_OA': OA})
+    
+    # 打印epoch摘要
+    print(f"Epoch {epoch} - Train Loss: {avg_loss:.4f}, mIoU: {mIoU:.4f}, OA: {OA:.4f}")
+    
+    # 记录每个epoch的指标到wandb
+    wandb.log({
+        'epoch': epoch,
+        'train_loss': avg_loss, 
+        'train_mIoU': mIoU, 
+        'train_OA': OA
+    })
+    
     return avg_loss
 
 def get_semantic_seg_from_query_outputs(pred_logits, pred_masks):
@@ -153,16 +168,20 @@ def get_semantic_seg_from_query_outputs(pred_logits, pred_masks):
     
     return segmentation
 
-def validate(model, loader, loss_fn, device):
+def validate(config, model, loader, loss_fn, device):
     model.eval()
     total_loss = 0
-    metrics = Evaluator(num_class=model.config.num_classes)
+    metrics = Evaluator(num_class=config.num_classes)
+    
+    # 创建验证进度条
+    pbar = tqdm(loader, desc="Validation")
+    
     with torch.no_grad():
-        for batch in loader:
+        for i, batch in enumerate(pbar):
             img = batch['img'].to(device)
             mask = batch['gt_semantic_seg'].to(device)
             
-            # Handle mask dimensions if needed
+            # 处理掩码维度（如果需要）
             if mask.dim() == 4 and mask.shape[1] == 1:
                 mask = mask.squeeze(1)
 
@@ -170,20 +189,34 @@ def validate(model, loader, loss_fn, device):
             pred_logits = outputs["pred_logits"]
             pred_masks = outputs["pred_masks"]
             
-            # Calculate loss
+            # 计算损失
             loss = loss_fn(pred_logits, pred_masks, mask)
-            total_loss += loss.item()
+            batch_loss = loss.item()
+            
+            # 检查损失是否为NaN
+            if not torch.isfinite(loss):
+                print(f"Warning: Non-finite validation loss at batch {i}, value: {batch_loss}")
+                quit()
+                
+            total_loss += batch_loss
+            
+            # 更新进度条
+            pbar.set_postfix({"val_batch_loss": f"{batch_loss:.4f}", "avg_val_loss": f"{total_loss/(i+1):.4f}"})
 
-            # Convert to semantic segmentation format for metrics
+            # 转换为语义分割格式以计算指标
             pred_mask = get_semantic_seg_from_query_outputs(pred_logits, pred_masks)
             
-            for i in range(mask.size(0)):
-                metrics.add_batch(mask[i].cpu().numpy(), pred_mask[i].cpu().numpy())
+            for j in range(mask.size(0)):
+                metrics.add_batch(mask[j].cpu().numpy(), pred_mask[j].cpu().numpy())
 
-    avg_loss = total_loss / len(loader)
+    # 计算平均损失和指标
+    avg_loss = total_loss / len(loader) if len(loader) > 0 else 0
     mIoU = np.nanmean(metrics.Intersection_over_Union())
     OA = np.nanmean(metrics.OA())
-    wandb.log({'val_loss': avg_loss, 'val_mIoU': mIoU, 'val_OA': OA})
+    
+    # 打印验证摘要
+    print(f"Validation - Loss: {avg_loss:.4f}, mIoU: {mIoU:.4f}, OA: {OA:.4f}")
+    
     return avg_loss, mIoU, OA
 
 def main():
@@ -202,7 +235,7 @@ def main():
                )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Supervision_Train(config).to(device)
+    model = config.net.to(device)
     if config.pretrained_ckpt_path:
         model.load_state_dict(torch.load(config.pretrained_ckpt_path, map_location=device))
 
@@ -211,11 +244,6 @@ def main():
     train_loader = config.train_loader
     val_loader = config.val_loader
 
-    # 初始化验证指标
-    val_loss = 0
-    mIoU = 0
-    OA = 0
-    
     # 创建用于跟踪指标的列表
     train_losses = []
     val_losses = []
@@ -228,43 +256,45 @@ def main():
 
     # 训练/验证循环
     for epoch in range(1, config.max_epoch + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, config.loss, device, epoch)
+        # 打印当前学习率
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch}/{config.max_epoch} - Learning rate: {current_lr:.6f}")
+        
+        train_loss = train_one_epoch(config, model, train_loader, optimizer, config.loss, device, epoch)
         train_losses.append(train_loss)
         
+        # 定期验证
         if epoch % config.check_val_every_n_epoch == 0:
-            val_loss, mIoU, OA = validate(model, val_loader, config.loss, device)
+            val_loss, mIoU, OA = validate(config, model, val_loader, config.loss, device)
             val_losses.append(val_loss)
             val_mious.append(mIoU)
             val_oas.append(OA)
-        else:
-            # 如果这个epoch没有验证，使用上一个值填充
-            if val_losses:
-                val_losses.append(val_losses[-1])
-                val_mious.append(val_mious[-1])
-                val_oas.append(val_oas[-1])
-            else:
-                val_losses.append(0)
-                val_mious.append(0)
-                val_oas.append(0)
+            
+            # 记录验证指标
+            wandb.log({
+                'epoch': epoch,
+                'val_loss': val_loss, 
+                'val_mIoU': mIoU, 
+                'val_OA': OA
+            })
+            
+            # 保存最新权重
+            os.makedirs(config.weights_path, exist_ok=True)
+            latest_ckpt_path = os.path.join(config.weights_path, f"{config.model_name}_latest.pth")
+            torch.save(model.state_dict(), latest_ckpt_path)
+
+            # 保存最佳权重
+            if mIoU > best_mIoU:
+                best_mIoU = mIoU
+                best_ckpt_path = os.path.join(config.weights_path, f"{config.model_name}_best.pth")
+                torch.save(model.state_dict(), best_ckpt_path)
+                print(f"New best model saved at {best_ckpt_path} with mIoU={best_mIoU:.4f}")
+            
 
         if lr_scheduler is not None:
             lr_scheduler.step()
-            # 记录当前学习率
-            current_lr = lr_scheduler.get_last_lr()[0]
-            wandb.log({'learning_rate': current_lr}, step=epoch)
 
-        # 保存最新权重
-        os.makedirs(config.weights_path, exist_ok=True)
-        latest_ckpt_path = os.path.join(config.weights_path, f"{config.weights_name}_latest.pth")
-        torch.save(model.state_dict(), latest_ckpt_path)
 
-        # 保存最佳权重
-        if mIoU > best_mIoU:
-            best_mIoU = mIoU
-            best_ckpt_path = os.path.join(config.weights_path, f"{config.weights_name}_best.pth")
-            torch.save(model.state_dict(), best_ckpt_path)
-            print(f"New best model saved at {best_ckpt_path} with mIoU={best_mIoU:.4f}")
-        
         # 保存指标到文件
         metrics_data = {
             'epoch': list(range(1, epoch + 1)),
@@ -273,45 +303,12 @@ def main():
             'val_mIoU': val_mious,
             'val_OA': val_oas
         }
-        metrics_path = os.path.join(metrics_dir, "training_metrics.npz")
-        np.savez(metrics_path, **metrics_data)
         
-        # 绘制loss曲线
-        if epoch > 1:  # 至少有两个点才能绘制曲线
-            plt.figure(figsize=(12, 8))
-            
-            # 绘制训练和验证loss
-            plt.subplot(2, 1, 1)
-            plt.plot(range(1, epoch + 1), train_losses, 'b-', label='Train Loss')
-            plt.plot(range(1, epoch + 1), val_losses, 'r-', label='Val Loss')
-            plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.legend()
-            plt.title('Training and Validation Loss')
-            plt.grid(True)
-            
-            # 绘制验证mIoU和OA
-            plt.subplot(2, 1, 2)
-            plt.plot(range(1, epoch + 1), val_mious, 'g-', label='Val mIoU')
-            plt.plot(range(1, epoch + 1), val_oas, 'y-', label='Val OA')
-            plt.xlabel('Epoch')
-            plt.ylabel('Metric Value')
-            plt.legend()
-            plt.title('Validation Metrics')
-            plt.grid(True)
-            
-            plt.tight_layout()
-            
-            # 保存图像
-            plot_path = os.path.join(metrics_dir, f"metrics_plot_epoch_{epoch}.png")
-            plt.savefig(plot_path)
-            
-            # 上传图像到wandb
-            wandb.log({"metrics_plot": wandb.Image(plot_path)}, step=epoch)
-            
-            plt.close()
-
-        print(f"Epoch {epoch} done. train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, val_mIoU={mIoU:.4f}, val_OA={OA:.4f}")
+        # 使用CSV格式保存指标，而不是NPZ
+        
+        metrics_df = pd.DataFrame(metrics_data)
+        csv_path = os.path.join(metrics_dir, "training_metrics.csv")
+        metrics_df.to_csv(csv_path, index=False)
 
     wandb.finish()
 

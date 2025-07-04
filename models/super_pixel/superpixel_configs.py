@@ -16,8 +16,8 @@ felzenszwalb_parameters_dict = {
 # }
 
 slic_parameters_dict = {
-    "n_segments": 200,  # 100  # The (approximate) number of labels in the segmented output image.
-    "compactness": 10,
+    "n_segments": 50,  # 100  # The (approximate) number of labels in the segmented output image.
+    "compactness": 20,
     # Balances color proximity and space proximity. Higher values give more weight to space proximity, making superpixel shapes more square/cubic. We recommend exploring possible values on a log scale, e.g., 0.01, 0.1, 1, 10, 100, before refining around a chosen value.
     "sigma": 1,  # 0,  # Width of Gaussian smoothing kernel for pre-processing for each dimension of the image.
     "start_label": 0,

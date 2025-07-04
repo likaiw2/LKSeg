@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.segment_anything.modeling.prompt_encoder import PromptEncoder
+from models.sam.modeling.prompt_encoder import PromptEncoder
 
 def inspect_prompt_encoder_internals():
     """详细检查PromptEncoder的内部结构和中间特征形状"""

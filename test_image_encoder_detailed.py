@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.segment_anything.modeling.image_encoder import ImageEncoderViT, Block, Attention, PatchEmbed
+from models.sam.modeling.image_encoder import ImageEncoderViT, Block, Attention, PatchEmbed
 
 def inspect_image_encoder_internals():
     """详细检查ImageEncoderViT的内部结构和中间特征形状"""

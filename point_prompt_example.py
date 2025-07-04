@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from PIL import Image
-from models.segment_anything import SamPredictor, sam_model_registry
+from models.sam import SamPredictor, sam_model_registry
 
 def point_prompt_example():
     # 1. 加载图像

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple
-from models.segment_anything.modeling import ImageEncoderViT, PromptEncoder
+from models.sam.modeling import ImageEncoderViT, PromptEncoder
 import matplotlib.pyplot as plt
 from models.super_pixel.superpixel import SuperpixelExtractor
 
@@ -191,32 +191,15 @@ class SPSam(nn.Module):
         return x
 
     def forward(self, images, point_coords=None, point_labels=None, boxes=None):
-
         preprocessed_images = self.preprocess(images)
 
         original_h, original_w = images.shape[-2:]
         target_size = (original_h, original_w)
 
-        # 提取superpixel mask，注意输入需要归一化到0~1
-        images_for_sp = images.clone()
-        images_for_sp = torch.clamp(images_for_sp / 255.0, 0, 1)
-
-        sp_masks, _, _, _ = self.superpixel_extractor(images_for_sp)
-
-        # 处理superpixel mask，生成mask prompt
-        # 每个superpixel对应一个mask prompt
-        # sp_masks: [NUM_MASKS, H, W]，我们转为[B, NUM_MASKS, H, W]
-        batch_size = images.shape[0]
-        if sp_masks.numel() > 0:  # 检查是否有superpixel masks
-            mask_prompt = sp_masks.unsqueeze(0).repeat(batch_size, 1, 1, 1).float().to(images.device)
-        else:
-            mask_prompt = None
-
         # 获取图像特征
         image_embeddings = self.image_encoder(preprocessed_images)
 
         # 生成辅助预测
-        # 使用图像特征生成辅助预测，并上采样到目标尺寸
         aux_logits = self.aux_head(image_embeddings)
         aux_logits = F.interpolate(
             aux_logits,
@@ -225,15 +208,56 @@ class SPSam(nn.Module):
             align_corners=False
         )
 
+        batch_size = images.shape[0]
+        
+        # 暂时移除超像素处理，改为生成固定的点提示
+        # 为每个图像生成一组固定的点提示
+        if point_coords is None:
+            # 创建网格点作为提示
+            grid_size = 5  # 5x5网格
+            h_step = original_h // (grid_size + 1)
+            w_step = original_w // (grid_size + 1)
+            
+            # 初始化点坐标和标签
+            generated_points = []
+            generated_labels = []
+            
+            for b in range(batch_size):
+                # 为每个批次创建点
+                batch_points = []
+                batch_labels = []
+                
+                # 创建网格点
+                for i in range(1, grid_size + 1):
+                    for j in range(1, grid_size + 1):
+                        # 计算点坐标
+                        y = i * h_step
+                        x = j * w_step
+                        batch_points.append([x, y])
+                        
+                        # 交替分配前景和背景标签
+                        label = 1 if (i + j) % 2 == 0 else 0
+                        batch_labels.append(label)
+            
+            # 将点和标签转换为张量
+            batch_points = torch.tensor(batch_points, dtype=torch.float, device=images.device)
+            batch_labels = torch.tensor(batch_labels, dtype=torch.int, device=images.device)
+            
+            generated_points.append(batch_points)
+            generated_labels.append(batch_labels)
+        
+        # 堆叠所有批次的点和标签
+        point_coords = torch.stack(generated_points)  # [B, N, 2]
+        point_labels = torch.stack(generated_labels)  # [B, N]
+        
+        print(f"Generated point prompts - shape: {point_coords.shape}")
+    
         # 处理提示编码
-        if (point_coords is not None and point_labels is not None) or boxes is not None:
-            sparse_embeddings, _ = self.prompt_encoder(
-                points=(point_coords, point_labels) if point_coords is not None else None,
-                boxes=boxes,
-                masks=mask_prompt,
-            )
-        else:
-            sparse_embeddings = None
+        sparse_embeddings, _ = self.prompt_encoder(
+            points=(point_coords, point_labels),
+            boxes=boxes,
+            masks=None,
+        )
 
         # 解码生成主要预测
         outputs = self.mask_decoder(

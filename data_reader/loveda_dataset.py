@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from .transform import *
 import os
 import os.path as osp
@@ -10,6 +12,8 @@ import albumentations as albu
 import matplotlib.patches as mpatches
 from PIL import Image, ImageOps
 import random
+from torch.utils.data import DataLoader
+
 
 
 COLOR_MAP = dict(
@@ -38,11 +42,6 @@ def get_training_transform():
         albu.VerticalFlip(p=0.5),
         albu.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.25),
         albu.Sharpen(),
-        # albu.RandomRotate90(p=0.5),
-        # albu.OneOf([
-        #     albu.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25),
-        #     albu.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=35, val_shift_limit=25)
-        # ], p=0.25),
         albu.Normalize()
     ]
     return albu.Compose(train_transform)
@@ -51,7 +50,7 @@ def get_training_transform():
 def train_aug(img, mask):
     # multi-scale training and crop
     crop_aug = Compose([RandomScale(scale_list=[0.75, 1.0, 1.25, 1.5], mode='value'),
-                        SmartCropV1(crop_size=512, max_ratio=0.75, ignore_index=255, nopad=False)])
+                        SmartCropV1(crop_size=INPUT_IMG_SIZE[0], max_ratio=0.75, ignore_index=255, nopad=False)])
     img, mask = crop_aug(img, mask)
 
     img, mask = np.array(img), np.array(mask)
@@ -94,7 +93,7 @@ class LoveDATrainDataset(Dataset):
     def __init__(self, 
                  data_root='data/LoveDA/Train', 
                  img_dir='images_png', 
-                 mosaic_ratio=0.25,
+                 mosaic_ratio=0,
                  mask_dir='masks_png', 
                  img_suffix='.png', 
                  mask_suffix='.png',
@@ -145,7 +144,7 @@ class LoveDATrainDataset(Dataset):
             img_path = osp.join(self.data_root, region, self.img_dir)
             mask_path = osp.join(self.data_root, region, self.mask_dir)
             filenames = os.listdir(img_path)
-            assert len(filenames) == len(os.listdir(mask_path)), f"len(filenames)"
+            
             img_ids += [(f.split('.')[0], region) for f in filenames]
         return img_ids
 
@@ -199,12 +198,20 @@ class LoveDATrainDataset(Dataset):
     
 
 if __name__ == '__main__':
+    from transform import *
     # Example usage
-    train_dataset = LoveDATrainDataset(data_root='/home/liw324/code/Segment/LKSeg/data/LoveDA/Train',
-                                       mosaic_ratio=0)
+    train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train')
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=1,
+        num_workers=2,
+        pin_memory=True,
+        shuffle=True,
+        drop_last=True
+    )
     
     print("########")
-    sample = train_dataset[0]
+    sample = next(iter(train_loader))
     print(sample['img'].size())
     print(sample['gt_semantic_seg'].size(), sample['gt_semantic_seg'].unique())
     print(sample['img_id'])

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple
-from models.segment_anything.modeling import ImageEncoderViT, PromptEncoder
+from models.sam.modeling import ImageEncoderViT, PromptEncoder
 import matplotlib.pyplot as plt
 from models.super_pixel.superpixel import SuperpixelExtractor
 
