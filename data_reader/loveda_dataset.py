@@ -198,7 +198,7 @@ class LoveDATrainDataset(Dataset):
     
 
 if __name__ == '__main__':
-    from transform import *
+    
     # Example usage
     train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train')
     train_loader = DataLoader(
@@ -210,13 +210,14 @@ if __name__ == '__main__':
         drop_last=True
     )
     
-    print("########")
-    sample = next(iter(train_loader))
-    print(sample['img'].size())
-    print(sample['gt_semantic_seg'].size(), sample['gt_semantic_seg'].unique())
-    print(sample['img_id'])
-    print(sample['img_type'])
-    print("########")
+    while True:
+        print("########")
+        sample = next(iter(train_loader))
+        print(sample['img'].size())
+        print(sample['gt_semantic_seg'].size(), sample['gt_semantic_seg'].unique())
+        print(sample['img_id'])
+        print(sample['img_type'])
+        print("########")
     
 
     # image_path = f"/home/liw324/code/Segment/LKSeg/data/LoveDA/Train/{sample['img_type']}/masks_png/{sample['img_id']}.png"

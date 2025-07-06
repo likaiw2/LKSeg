@@ -13,9 +13,9 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["WANDB_MODE"] = "offline"
-# os.environ["WANDB_MODE"] = "online"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+# os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
 
 
 def seed_everything(seed):
@@ -54,25 +54,15 @@ def train_one_epoch(config, model, loader, optimizer, loss_fn, device, epoch):
 
         optimizer.zero_grad()
         outputs = model(img)
-
-        # # SPSam输出包含pred_logits和pred_masks的字典
-        # pred_logits = outputs["pred_logits"]  # [B, Q, C+1]
-        # pred_masks = outputs["pred_masks"]    # [B, Q, H, W]
-
-        # print first batch shape
+        
+        # 打印第一个批次的形状和值范围
         if first_batch:
-            print(f"Image shape: {img.shape}")
-            print(f"Mask shape: {mask.shape}")
-            # print(f"Pred logits shape: {pred_logits.shape}")
-            # print(f"Pred masks shape: {pred_masks.shape}")
+            print(f"# Image shape: {img.shape}, range: [{img.min().item()}, {img.max().item()}]")
+            print(f"# Mask shape: {mask.shape}, range: [{mask.min().item()}, {mask.max().item()}], unique values: {torch.unique(mask).cpu().numpy()}")
+            print(f"# Output shape: {outputs.shape}, range: [{outputs.min().item()}, {outputs.max().item()}]")
             first_batch = False
-
-        # loss = loss_fn(pred_logits, pred_masks, mask)
+        
         loss = loss_fn(outputs, mask)
-        if not torch.isfinite(loss):
-            print(f"Warning: Non-finite loss at batch {i}, value: {loss.item()}")
-            quit()
-
         loss.backward()
         
         # 添加梯度裁剪以提高稳定性
@@ -93,12 +83,24 @@ def train_one_epoch(config, model, loader, optimizer, loss_fn, device, epoch):
             'learning_rate': optimizer.param_groups[0]['lr']
         })
         
-        # 转换查询预测为语义分割格式以计算指标
-        # pred_mask = get_semantic_seg_from_query_outputs(pred_logits, pred_masks)
-        pred_mask = outputs
+        # 使用detach()分离梯度，然后再转换为NumPy数组
+        pred_mask = outputs.detach()
+        
+        # 确保预测掩码的形状与真实标签相同
+        # 假设outputs的形状是[batch_size, num_classes, height, width]
+        pred_classes = pred_mask.argmax(dim=1)  # 形状变为[batch_size, height, width]
         
         for j in range(mask.size(0)):
-            metrics.add_batch(mask[j].cpu().numpy(), pred_mask[j].argmax(dim=0).cpu().numpy())
+            # 确保形状匹配
+            gt_np = mask[j].cpu().numpy()
+            pred_np = pred_classes[j].cpu().numpy()
+            
+            # 打印形状以进行调试
+            if i == 0 and j == 0:
+                print(f"# GT shape: {gt_np.shape}, Pred shape: {pred_np.shape}")
+                print(f"# GT unique values: {np.unique(gt_np)}")
+            
+            metrics.add_batch(gt_np, pred_np)
 
     # 计算平均损失和指标
     avg_loss = np.mean(iter_loss_list) if len(loader) > 0 else 0
@@ -193,11 +195,9 @@ def validate(config, model, loader, loss_fn, device):
                 mask = mask.squeeze(1)
 
             outputs = model(img)
-            pred_logits = outputs["pred_logits"]
-            pred_masks = outputs["pred_masks"]
             
             # 计算损失
-            loss = loss_fn(pred_logits, pred_masks, mask)
+            loss = loss_fn(outputs, mask)
             batch_loss = loss.item()
             
             # 检查损失是否为NaN
@@ -211,7 +211,7 @@ def validate(config, model, loader, loss_fn, device):
             pbar.set_postfix({"val_batch_loss": f"{batch_loss:.4f}", "avg_val_loss": f"{total_loss/(i+1):.4f}"})
 
             # 转换为语义分割格式以计算指标
-            pred_mask = get_semantic_seg_from_query_outputs(pred_logits, pred_masks)
+            pred_mask = outputs.argmax(dim=1)
             
             for j in range(mask.size(0)):
                 metrics.add_batch(mask[j].cpu().numpy(), pred_mask[j].cpu().numpy())

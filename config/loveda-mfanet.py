@@ -7,37 +7,35 @@ from catalyst import utils
 import datetime
 present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
-class CrossEntropy2d(nn.Module):
-    """ 2D version of the cross entropy loss """
-    def __init__(self, weight=None, size_average=True, ignore_index=-1):
-        super(CrossEntropy2d, self).__init__()
+class CrossEntropyLoss(nn.Module):
+    def __init__(self, weight=None, ignore_index=255):
+        super(CrossEntropyLoss, self).__init__()
         self.weight = weight
-        self.size_average = size_average
         self.ignore_index = ignore_index
-
-    def forward(self, input, target):
-        dim = input.dim()
-        if dim == 2:
-            return F.cross_entropy(input, target, weight=self.weight, 
-                                  size_average=self.size_average, 
-                                  ignore_index=self.ignore_index)
-        elif dim == 4:
-            output = input.view(input.size(0), input.size(1), -1)
-            output = torch.transpose(output, 1, 2).contiguous()
-            output = output.view(-1, output.size(2))
-            target = target.view(-1)
-            return F.cross_entropy(output, target, weight=self.weight, 
-                                  size_average=self.size_average,
-                                  ignore_index=self.ignore_index)
-        else:
-            raise ValueError('Expected 2 or 4 dimensions (got {})'.format(dim))
+        
+    def forward(self, output, target):
+        # 确保目标张量中的值在有效范围内
+        # 打印目标张量的最小值和最大值，用于调试
+        min_val = target.min().item()
+        max_val = target.max().item()
+        # print(f"Target min: {min_val}, max: {max_val}, output classes: {output.size(1)}")
+        
+        # # 如果目标张量中有无效值，将其设置为忽略索引
+        # if min_val < 0 or max_val >= output.size(1):
+        #     print(f"Warning: Target contains invalid values:{target.unique()}. Setting them to ignore_index ({self.ignore_index}).")
+        #     # 创建掩码，标识有效的目标值
+        #     valid_mask = (target >= 0) & (target < output.size(1))
+        #     # 将无效值设置为忽略索引
+        #     target = torch.where(valid_mask, target, torch.tensor(self.ignore_index, device=target.device))
+        
+        return F.cross_entropy(output, target, weight=self.weight, ignore_index=self.ignore_index)
 
 
 # ------------------------------------------
 # Training Hyperparameters
 # ------------------------------------------
-max_epoch = 45
-ignore_index = len(CLASSES)
+max_epoch = 100
+ignore_index = 255
 train_batch_size = 4
 val_batch_size = 4
 lr = 9e-3
@@ -55,7 +53,7 @@ model_name = "mfanet"
 dataset_name = "loveda"
 weights_path = f"{save_path}/model_weights/loveda/{model_name}_{present_time}"
 log_name = f'{dataset_name}-{model_name}'
-check_val_every_n_epoch = 1
+check_val_every_n_epoch = 10
 save_top_k = 1
 save_last = True
 gpus = 'auto'  # default or gpu ids:[0] or gpu nums: 2
@@ -73,7 +71,7 @@ resume_ckpt_path = None #"model_weights/loveda/delta-0817l0.8lr/delta-0817l0.8lr
 net = MFANet(num_classes=num_classes)
 
 # define the loss
-loss = CrossEntropy2d(ignore_index=ignore_index)
+loss = CrossEntropyLoss(ignore_index=ignore_index)
 use_aux_loss = False  # 设置为False，因为我们现在只有一条预测路径
 
 # define the optimizer
