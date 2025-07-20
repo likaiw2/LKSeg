@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from transform import Compose,RandomCrop,PadImage,RandomHorizontalFlip,RandomVerticalFlip,Resize,RandomScale,ColorJitter,SmartCropV1,SmartCropV2
+from data_reader.transform import Compose,RandomCrop,PadImage,RandomHorizontalFlip,RandomVerticalFlip,Resize,RandomScale,ColorJitter,SmartCropV1,SmartCropV2
 import os
 import os.path as osp
 import numpy as np
