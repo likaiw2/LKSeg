@@ -9,6 +9,7 @@ from tools.cfg import py2cfg
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
+from PIL import Image
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -29,15 +30,14 @@ def test(config, model, loader, device, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'predictions'), exist_ok=True)
     
-    # 创建进度条
-    pbar = tqdm(loader, desc="Testing")
-    
     class_names = config.CLASSES if hasattr(config, 'CLASSES') else [f'Class {i}' for i in range(config.num_classes)]
     
     with torch.no_grad():
-        for i, batch in enumerate(pbar):
+        for i, batch in enumerate(tqdm(loader, desc="Testing")):
             img = batch['img'].to(device)
             mask = batch['gt_semantic_seg'].to(device)
+            img_id = batch['img_id']
+            img_type = batch['img_type']
             
             # 处理掩码维度（如果需要）
             if mask.dim() == 4 and mask.shape[1] == 1:
@@ -49,38 +49,59 @@ def test(config, model, loader, device, output_dir):
             # 获取预测掩码
             pred_mask = outputs.argmax(dim=1)
             
+            # 可视化每张图片
+            for j in range(img.size(0)):
+                # 获取单张图片数据
+                single_img = np.array(Image.open(f"/home/liw324/code/Segment/LKSeg/data/LoveDA/Val/{img_type[j]}/images_png/{img_id[j]}.png").convert('RGB'))
+                single_mask = mask[j].cpu().numpy()
+                single_pred = pred_mask[j].cpu().numpy()
+                
+                # 转换图片为可视化格式 (C,H,W) -> (H,W,C)
+                # img_vis = single_img.permute(1, 2, 0).numpy()
+                # 如果图片是归一化的，需要反归一化
+                # if img_vis.max() <= 3.0:
+                #     img_vis = (img_vis * 255).astype(np.uint8)
+                
+                # 创建可视化
+                fig, axes = plt.subplots(1, 3, figsize=(15, 10))
+                
+                axes[0].imshow(single_img)
+                axes[0].set_title(f'Image {img_id[j]}')
+                axes[0].axis('off')
+                
+                axes[1].imshow(single_mask, cmap='tab10')
+                axes[1].set_title('Ground Truth')
+                axes[1].axis('off')
+                
+                axes[2].imshow(single_pred, cmap='tab10')
+                axes[2].set_title('Prediction')
+                axes[2].axis('off')
+                
+                plt.tight_layout()
+                plt.savefig(os.path.join(output_dir, 'predictions', f'{img_id[j]}_comparison.png'))
+                plt.close()
+                
+                print(f"Saved visualization for {img_id[j]}")
+            
             # 计算指标
             for j in range(mask.size(0)):
                 gt_np = mask[j].cpu().numpy()
                 pred_np = pred_mask[j].cpu().numpy()
                 metrics.add_batch(gt_np, pred_np)
-                
-                # 可选：保存预测结果可视化
-                if i < 10:  # 只保存前10个批次的结果
-                    # 创建可视化图像
-                    vis_img = visualize_prediction(
-                        img[j].cpu().numpy().transpose(1, 2, 0),
-                        gt_np,
-                        pred_np,
-                        class_names
-                    )
-                    
-                    # 保存可视化结果
-                    save_path = os.path.join(output_dir, 'predictions', f'sample_{i}_{j}.png')
-                    plt.imsave(save_path, vis_img)
-    
+            if i >9:
+                break
     # 计算指标
     IoU = metrics.Intersection_over_Union()
     mIoU = np.nanmean(IoU)
     OA = np.nanmean(metrics.OA())
-    F1 = metrics.F1Score()
-    mF1 = np.nanmean(F1)
+    # F1 = metrics.F1Score()
+    # mF1 = np.nanmean(F1)
     
     # 打印结果
     print(f"Test Results:")
     print(f"mIoU: {mIoU:.4f}")
     print(f"OA: {OA:.4f}")
-    print(f"mF1: {mF1:.4f}")
+    # print(f"mF1: {mF1:.4f}")
     
     # 打印每个类别的IoU
     print("\nPer-class IoU:")
@@ -90,61 +111,14 @@ def test(config, model, loader, device, output_dir):
     # 保存指标到CSV
     results = {
         'Metric': ['mIoU', 'OA', 'mF1'] + [f'IoU_{class_names[i]}' for i in range(len(IoU))],
-        'Value': [mIoU, OA, mF1] + [iou for iou in IoU]
+        'Value': [mIoU, OA] + [iou for iou in IoU]
     }
     
     results_df = pd.DataFrame(results)
     results_df.to_csv(os.path.join(output_dir, 'test_results.csv'), index=False)
     
-    return mIoU, OA, mF1
+    return mIoU, OA
 
-def visualize_prediction(image, ground_truth, prediction, class_names):
-    """
-    创建一个可视化图像，显示原始图像、真实标签和预测结果
-    """
-    # 创建颜色映射
-    n_classes = len(class_names)
-    colors = plt.cm.get_cmap('tab20', n_classes)
-    
-    # 归一化图像
-    if image.max() > 1:
-        image = image / 255.0
-    
-    # 创建分割掩码的彩色表示
-    gt_colored = np.zeros((ground_truth.shape[0], ground_truth.shape[1], 3))
-    pred_colored = np.zeros((prediction.shape[0], prediction.shape[1], 3))
-    
-    for i in range(n_classes):
-        gt_colored[ground_truth == i] = colors(i)[:3]
-        pred_colored[prediction == i] = colors(i)[:3]
-    
-    # 创建组合图像
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
-    axes[0].imshow(image)
-    axes[0].set_title('Image')
-    axes[0].axis('off')
-    
-    axes[1].imshow(gt_colored)
-    axes[1].set_title('Ground Truth')
-    axes[1].axis('off')
-    
-    axes[2].imshow(pred_colored)
-    axes[2].set_title('Prediction')
-    axes[2].axis('off')
-    
-    # 创建图例
-    patches = [plt.Rectangle((0, 0), 1, 1, color=colors(i)[:3]) for i in range(n_classes)]
-    plt.legend(patches, class_names, loc='lower center', bbox_to_anchor=(0.5, -0.15),
-               ncol=min(5, n_classes), mode='expand')
-    
-    # 保存图像并返回
-    fig.canvas.draw()
-    vis_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    vis_img = vis_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    plt.close(fig)
-    
-    return vis_img
 
 def main():
     args = get_args()
@@ -155,7 +129,7 @@ def main():
     model = config.net.to(device)
     
     # 加载模型权重
-    model.load_state_dict(torch.load(args.weights_path, map_location=device))
+    model.load_state_dict(torch.load(args.weights_path, map_location=device, weights_only=True))
     print(f"Loaded model weights from {args.weights_path}")
     
     # 使用验证集作为测试集（如果没有专门的测试集）
@@ -163,7 +137,7 @@ def main():
     
     # 运行测试
     output_dir = args.output_dir
-    mIoU, OA, mF1 = test(config, model, test_loader, device, output_dir)
+    mIoU, OA = test(config, model, test_loader, device, output_dir)
     
     print(f"\nTest completed. Results saved to {output_dir}")
 
