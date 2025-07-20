@@ -63,10 +63,10 @@ class LoveDATrainDataset(Dataset):
                 # use normal transform
                 self.transform = Compose([
                     RandomScale(scale_list=[0.75, 1.0, 1.25, 1.5], mode='value'),
-                    SmartCropV1(crop_size=self.img_size[0], max_ratio=0.75, ignore_index=len(self.CLASSES), nopad=False),
+                    SmartCropV1(crop_size=self.img_size[0], max_ratio=0.75, ignore_index=0, nopad=False),
                     RandomHorizontalFlip(),
                     RandomVerticalFlip(),
-                    PadImage(self.img_size, ignore_index=len(self.CLASSES)),
+                    PadImage(self.img_size, ignore_index=0),
                 ])
                 img, mask = self.transform(img, mask)
 

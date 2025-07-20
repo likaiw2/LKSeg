@@ -8,7 +8,7 @@ import datetime
 present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 class CrossEntropyLoss(nn.Module):
-    def __init__(self, weight=None, ignore_index=255):
+    def __init__(self, weight=None, ignore_index=0):
         super(CrossEntropyLoss, self).__init__()
         self.weight = weight
         self.ignore_index = ignore_index
@@ -19,14 +19,6 @@ class CrossEntropyLoss(nn.Module):
         min_val = target.min().item()
         max_val = target.max().item()
         # print(f"Target min: {min_val}, max: {max_val}, output classes: {output.size(1)}")
-        
-        # # 如果目标张量中有无效值，将其设置为忽略索引
-        # if min_val < 0 or max_val >= output.size(1):
-        #     print(f"Warning: Target contains invalid values:{target.unique()}. Setting them to ignore_index ({self.ignore_index}).")
-        #     # 创建掩码，标识有效的目标值
-        #     valid_mask = (target >= 0) & (target < output.size(1))
-        #     # 将无效值设置为忽略索引
-        #     target = torch.where(valid_mask, target, torch.tensor(self.ignore_index, device=target.device))
         
         return F.cross_entropy(output, target, weight=self.weight, ignore_index=self.ignore_index)
 

@@ -311,7 +311,7 @@ def main():
             'val_OA': val_oas
         }
         
-        # 使用CSV格式保存指标，而不是NPZ
+        # 使用CSV格式保存指标
         
         metrics_df = pd.DataFrame(metrics_data)
         csv_path = os.path.join(metrics_dir, "training_metrics.csv")
