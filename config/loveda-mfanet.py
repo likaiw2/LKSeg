@@ -1,6 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
-from data_reader.loveda_dataset import *
+from torch import nn
+from data_reader.loveda_dataset import LoveDATrainDataset
 from models.MFANet import MFANet
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
@@ -27,15 +28,16 @@ class CrossEntropyLoss(nn.Module):
 # Training Hyperparameters
 # ------------------------------------------
 max_epoch = 100
-ignore_index = 255
+ignore_index = 0
 train_batch_size = 4
 val_batch_size = 4
 lr = 9e-3
 weight_decay = 0.01
 backbone_lr = 0.001
 backbone_weight_decay = 0.01
-num_classes = len(CLASSES)
-classes = CLASSES
+classes = LoveDATrainDataset.CLASSES
+num_classes = len(classes)
+
 
 # ------------------------------------------
 # Logging and Saving Settings
@@ -63,8 +65,7 @@ resume_ckpt_path = None #"model_weights/loveda/delta-0817l0.8lr/delta-0817l0.8lr
 net = MFANet(num_classes=num_classes)
 
 # define the loss
-loss = CrossEntropyLoss(ignore_index=ignore_index)
-use_aux_loss = False  # 设置为False，因为我们现在只有一条预测路径
+loss = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction='none')
 
 # define the optimizer
 layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
