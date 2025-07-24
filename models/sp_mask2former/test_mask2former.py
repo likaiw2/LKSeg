@@ -12,7 +12,7 @@ from backbone import SwinTransformer
 from pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
 from transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
 from mask_former_head import MaskFormerHead
-from mask2former import Mask2Former
+from models.sp_mask2former.sp_mask2former import Mask2Former
 from utils import ShapeSpec
 
 
