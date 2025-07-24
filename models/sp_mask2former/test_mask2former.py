@@ -280,7 +280,7 @@ def test_full_mask2former():
         input_shape = backbone.output_shape()
         
         # Create head
-        pixel_decoder = create_pixel_decoder(input_shape, "base")
+        pixel_decoder = create_pixel_decoder(input_shape, "msdeform")
         transformer_decoder = create_transformer_decoder("multiscale")
         
         head = MaskFormerHead(
@@ -356,6 +356,81 @@ def test_full_mask2former():
         return None
 
 
+def test_training_mode():
+    """Test Mask2Former in training mode"""
+    print("=" * 50)
+    print("Testing Training Mode...")
+    
+    try:
+        # Create model with criterion
+        backbone = create_swin_backbone()
+        input_shape = backbone.output_shape()
+        
+        pixel_decoder = create_pixel_decoder(input_shape, "msdeform")
+        transformer_decoder = create_transformer_decoder("multiscale")
+        head = MaskFormerHead(
+            input_shape=input_shape,
+            num_classes=150,
+            pixel_decoder=pixel_decoder,
+            transformer_decoder=transformer_decoder,
+            transformer_in_feature="multi_scale_pixel_decoder",
+        )
+        
+        # Create a mock criterion that accepts the expected inputs
+        class MockCriterion:
+            def __init__(self):
+                self.weight_dict = {"loss_ce": 1.0, "loss_mask": 1.0}
+            
+            def __call__(self, outputs, targets):
+                # Return mock losses
+                return {
+                    "loss_ce": torch.tensor(1.0),
+                    "loss_mask": torch.tensor(2.0),
+                }
+        
+        model = Mask2Former(
+            backbone=backbone,
+            sem_seg_head=head,
+            criterion=MockCriterion(),
+            num_queries=100,
+            object_mask_threshold=0.25,
+            overlap_threshold=0.8,
+            metadata=None,
+            size_divisibility=32,
+            sem_seg_postprocess_before_inference=True,
+            pixel_mean=[123.675, 116.28, 103.53],
+            pixel_std=[58.395, 57.12, 57.375],
+            test_topk_per_image=100,
+        )
+        
+        model.train()  # Set to training mode
+        
+        # Create training batch without instances (will use targets=None)
+        batched_inputs = [
+            {
+                "image": torch.randn(3, 224, 224),
+                "height": 224,
+                "width": 224,
+            }
+        ]
+        
+        # Test forward pass
+        outputs = model(batched_inputs)
+        
+        print("Training outputs:")
+        for key, value in outputs.items():
+            print(f"  {key}: {value}")
+        
+        print("✅ Training mode test passed!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Training mode test failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Run all tests"""
     print("Starting Mask2Former Tests...")
@@ -391,6 +466,10 @@ def main():
     if model is None:
         print("❌ Complete Mask2Former test failed")
     
+    # Test 6: Training Mode
+    if not test_training_mode():
+        print("❌ Training mode test failed")
+    
     print("=" * 80)
     print("All tests completed!")
     
@@ -401,12 +480,13 @@ def main():
         standard_decoder is not None,
         multiscale_decoder is not None,
         head is not None,
-        model is not None
+        model is not None,
+        test_training_mode()
     ])
     
-    print(f"✅ {success_count}/6 tests passed")
+    print(f"✅ {success_count}/7 tests passed")
     
-    if success_count == 6:
+    if success_count == 7:
         print("🎉 All Mask2Former components working correctly!")
     else:
         print("⚠️  Some components need attention")
