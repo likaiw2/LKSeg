@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
 from data_reader.loveda_dataset import LoveDATrainDataset,CLASSES
-from models.SPSam import SPSam
+from models.SP_maskformer.SP_maskformer import SPSam
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
