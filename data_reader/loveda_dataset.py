@@ -19,6 +19,9 @@ class LoveDATrainDataset(Dataset):
                  mask_dir='masks_png', 
                  img_suffix='.png', 
                  mask_suffix='.png',
+                 superpixel=False,
+                 superpixel_dict=None,
+                 superpixel_type=None,
                  transform=None, 
                  test_mode=False,
                  original_size=[1024,1024],
@@ -29,11 +32,28 @@ class LoveDATrainDataset(Dataset):
         self.mask_dir = mask_dir
         self.img_suffix = img_suffix
         self.mask_suffix = mask_suffix
+        self.superpixel = superpixel
         self.transform = transform
         self.test_mode = test_mode
         self.original_size = original_size
         self.img_size = output_size
         self.img_ids = self._collect_img_id_region()
+        
+        if self.superpixel:
+            if superpixel_dict is not None:
+                self.superpixel_type = superpixel_type
+                self.superpixel_dict = superpixel_dict
+            else:
+                self.superpixel_type = "slic"
+                self.superpixel_dict = {
+                    "n_segments": 100,
+                    "compactness": 20,
+                    "sigma": 1,
+                    "start_label": 0,
+                    "min_size_factor": 0.5,
+                    "max_num_iter": 10,
+                    "enforce_connectivity": True,
+                }
         
         self.COLOR_MAP = dict(
             nothing=(0, 0, 0),              # 0 black
@@ -70,6 +90,25 @@ class LoveDATrainDataset(Dataset):
                 ])
                 img, mask = self.transform(img, mask)
 
+        # generate superpixel mask
+        if not self.superpixel:
+            sp_input = None
+        else:
+            from models.super_pixel.superpixel import SuperpixelExtractor
+            
+            # 将PIL图像转换为tensor格式 [1, C, H, W]
+            img_array = np.array(img)
+            img_tensor = torch.from_numpy(img_array.transpose(2, 0, 1)).unsqueeze(0).float()
+            
+            # 初始化superpixel提取器
+            extractor = SuperpixelExtractor(self.superpixel_type)
+            
+            # 生成superpixel
+            _, _, _, assigned_masks = extractor(img_tensor, self.superpixel_dict)
+            
+            # 获取superpixel标签矩阵 [H, W]
+            sp_input = assigned_masks[0].numpy().astype(np.int32)
+
         # convert into numpy and standardize
         img = np.array(img).astype(np.float32) / 255.0                                      # normalize to [0,1]  
         img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])     # imagenet standardization  
@@ -85,7 +124,8 @@ class LoveDATrainDataset(Dataset):
             'img': img,
             'gt_semantic_seg': mask,
             'img_id': img_id,
-            'img_type': img_type
+            'img_type': img_type,
+            'superpixel_mask': sp_input
         }
 
     def __len__(self):

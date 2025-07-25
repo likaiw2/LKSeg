@@ -8,7 +8,7 @@ from transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTran
 from utils import ShapeSpec
 
 
-class MaskFormerHead(nn.Module):
+class SPMaskFormerHead(nn.Module):
     def __init__(
         self,
         input_shape: Dict[str, ShapeSpec],
@@ -24,14 +24,14 @@ class MaskFormerHead(nn.Module):
         self.transformer_in_feature = transformer_in_feature
         self.num_classes = num_classes
 
-    def forward(self, features, targets=None):
-        return self.layers(features)
+    def forward(self, features, sp_input=None, targets=None):
+        return self.layers(features, sp_input)
 
-    def layers(self, features, mask=None):
+    def layers(self, features, sp_input, mask=None):
         mask_features, transformer_encoder_features, multi_scale_features = self.pixel_decoder(features)
         
         if self.transformer_in_feature == "multi_scale_pixel_decoder":
-            predictions = self.predictor(multi_scale_features, mask_features, mask)
+            predictions = self.predictor(multi_scale_features, mask_features, mask, sp_input)
         elif self.transformer_in_feature == "transformer_encoder":
             assert (
                 transformer_encoder_features is not None

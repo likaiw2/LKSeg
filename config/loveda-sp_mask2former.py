@@ -10,7 +10,7 @@ present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 from models.sp_mask2former.backbone import SwinTransformer
 from models.sp_mask2former.pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
 from models.sp_mask2former.transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
-from models.sp_mask2former.mask_former_head import MaskFormerHead
+from models.sp_mask2former.mask_former_head import SPMaskFormerHead
 from models.sp_mask2former.sp_mask2former import Mask2Former
 from models.sp_mask2former.utils import ShapeSpec
 
@@ -128,7 +128,7 @@ input_shape = backbone.output_shape()
 
 pixel_decoder = create_pixel_decoder(input_shape, "msdeform")
 transformer_decoder = create_transformer_decoder("multiscale")
-head = MaskFormerHead(
+head = SPMaskFormerHead(
     input_shape=input_shape,
     num_classes=100,
     pixel_decoder=pixel_decoder,
@@ -178,8 +178,10 @@ lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_e
 # ------------------------------------------
 # Dataloader Settings
 # ------------------------------------------
-train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train')
-val_dataset = LoveDATrainDataset(data_root='data/LoveDA/Val')
+train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train',
+                                   superpixel=True)
+val_dataset = LoveDATrainDataset(data_root='data/LoveDA/Val',
+                                 superpixel=True)
 test_dataset = val_dataset
 
 train_loader = DataLoader(dataset=train_dataset,

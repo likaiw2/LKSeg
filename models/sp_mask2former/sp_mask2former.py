@@ -87,8 +87,11 @@ class Mask2Former(nn.Module):
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = torch.stack(images)
         
+        sp_input = [x["superpixel_mask"].to(self.device) for x in batched_inputs]
+        sp_input = torch.stack(sp_input)
+        
         features = self.backbone(images)
-        outputs = self.sem_seg_head(features)
+        outputs = self.sem_seg_head(features, sp_input=sp_input)
 
         if self.training:
             # mask classification target
