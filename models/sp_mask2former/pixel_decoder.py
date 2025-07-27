@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Union, Callable
 import numpy as np
 
-from utils import ShapeSpec, Conv2d, get_norm, c2_xavier_fill
-from position_encoding import PositionEmbeddingSine
-from transformer import TransformerEncoder, TransformerEncoderLayer
+from models.sp_mask2former.utils import ShapeSpec, Conv2d, get_norm, c2_xavier_fill
+from models.sp_mask2former.position_encoding import PositionEmbeddingSine
+from models.sp_mask2former.transformer import TransformerEncoder, TransformerEncoderLayer
 
 
 class BasePixelDecoder(nn.Module):
@@ -61,7 +61,18 @@ class BasePixelDecoder(nn.Module):
         
         self.maskformer_num_feature_levels = 3
 
-    def forward(self, features):
+    def forward(self, features, mask=None):
+        # 在forward开始时确保所有层都在正确设备上
+        device = next(iter(features.values())).device
+        
+        # 确保lateral_convs在正确设备上
+        for conv in self.lateral_convs:
+            conv = conv.to(device)
+        
+        # 确保output_convs在正确设备上  
+        for conv in self.output_convs:
+            conv = conv.to(device)
+        
         multi_scale_features = []
         num_cur_levels = 0
         

@@ -3,15 +3,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple, Union
 
-from backbone import SwinTransformer
-from pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
-from transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
-from mask_former_head import MaskFormerHead
-from utils import ShapeSpec
+from models.sp_mask2former.backbone import SwinTransformer
+from models.sp_mask2former.pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
+from models.sp_mask2former.transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
+from models.sp_mask2former.mask_former_head import SPMaskFormerHead
+from models.sp_mask2former.utils import ShapeSpec
 
 
 
-class Mask2Former(nn.Module):
+class SP_Mask2Former(nn.Module):
     """
     Main Mask2Former model
     """
@@ -83,12 +83,11 @@ class Mask2Former(nn.Module):
                     segments_info (list[dict]): Describe each segment in `panoptic_seg`.
                         Each dict contains keys "id", "category_id", "isthing".
         """
-        images = [x["image"].to(self.device) for x in batched_inputs]
-        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        images = torch.stack(images)
-        
-        sp_input = [x["superpixel_mask"].to(self.device) for x in batched_inputs]
-        sp_input = torch.stack(sp_input)
+        # 从列表中提取图像和超像素掩码
+        images = torch.stack([x["image"].to(self.device) for x in batched_inputs])
+        sp_input = None
+        if "superpixel_mask" in batched_inputs[0] and batched_inputs[0]["superpixel_mask"] is not None:
+            sp_input = torch.stack([x["superpixel_mask"].to(self.device) for x in batched_inputs])
         
         features = self.backbone(images)
         outputs = self.sem_seg_head(features, sp_input=sp_input)
@@ -96,7 +95,7 @@ class Mask2Former(nn.Module):
         if self.training:
             # mask classification target
             if "instances" in batched_inputs[0]:
-                gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
+                gt_instances = [x["instances"] for x in batched_inputs]
                 targets = self.prepare_targets(gt_instances, images)
             else:
                 targets = None

@@ -5,7 +5,7 @@ import numpy as np
 from typing import Dict, List, Optional
 import math
 
-from utils import ShapeSpec
+from models.sp_mask2former.utils import ShapeSpec
 
 
 def drop_path(x, drop_prob: float = 0., training: bool = False):

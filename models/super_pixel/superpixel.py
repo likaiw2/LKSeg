@@ -16,7 +16,7 @@ class SuperpixelExtractor:
     """
 
     def __init__(self, algorithm):
-        print("Parameters dict at beginning of init", algorithm)
+        # print("Parameters dict at beginning of init", algorithm)
 
         if isinstance(algorithm, str):
 

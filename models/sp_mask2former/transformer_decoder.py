@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from typing import Optional
 import logging
 
-from position_encoding import PositionEmbeddingSine
-from transformer import Transformer
-from utils import Conv2d, c2_xavier_fill
+from models.sp_mask2former.position_encoding import PositionEmbeddingSine
+from models.sp_mask2former.transformer import Transformer
+from models.sp_mask2former.utils import Conv2d, c2_xavier_fill
 
 
 class MLP(nn.Module):
@@ -133,6 +133,7 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
         pre_norm: bool = False,
         mask_dim: int = 256,
         enforce_input_project: bool = False,
+        use_superpixel: bool = False,
     ):
         super().__init__()
 
@@ -202,7 +203,18 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             self.class_embed = nn.Linear(hidden_dim, num_classes + 1)
         self.mask_embed = MLP(hidden_dim, hidden_dim, mask_dim, 3)
 
-    def forward(self, x, mask_features, mask=None):
+        self.use_superpixel = use_superpixel
+        
+        # 添加超像素融合模块
+        if self.use_superpixel:
+            # 超像素特征提取MLP
+            self.sp_feature_mlp = MLP(1, hidden_dim, hidden_dim, 3)
+            # Query融合MLP
+            self.query_fusion_mlp = MLP(hidden_dim * 2, hidden_dim, hidden_dim, 2)
+            # 超像素位置编码
+            self.sp_pos_embed = nn.Linear(2, hidden_dim)  # x,y坐标编码
+
+    def forward(self, x, mask_features, mask=None, sp_input=None):
         # x is a list of multi-scale feature
         assert len(x) == self.num_feature_levels
         src = []
@@ -223,9 +235,13 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
 
         _, bs, _ = src[0].shape
 
-        # QxNxC
+        # 原始query
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(1, bs, 1)
         output = self.query_feat.weight.unsqueeze(1).repeat(1, bs, 1)
+        
+        # 融合超像素信息
+        if self.use_superpixel and sp_input is not None:
+            output = self._fuse_superpixel_queries(output, sp_input, size_list[0])
 
         predictions_class = []
         predictions_mask = []
@@ -300,6 +316,84 @@ class MultiScaleMaskedTransformerDecoder(nn.Module):
             ]
         else:
             return [{"pred_masks": b} for b in outputs_seg_masks[:-1]]
+
+    def _fuse_superpixel_queries(self, queries, sp_input, target_size):
+        """融合超像素信息到queries中"""
+        bs = queries.shape[1]
+        
+        # 处理每个batch
+        fused_queries = []
+        for b in range(bs):
+            sp_mask = sp_input[b]  # [H, W]
+            
+            # 调整超像素掩码到目标尺寸
+            if sp_mask.shape != target_size:
+                sp_mask_tensor = torch.from_numpy(sp_mask).float().unsqueeze(0).unsqueeze(0)
+                sp_mask_resized = F.interpolate(
+                    sp_mask_tensor, size=target_size, mode='nearest'
+                ).squeeze().long()
+            else:
+                sp_mask_resized = torch.from_numpy(sp_mask).long()
+            
+            # 获取超像素统计信息
+            unique_sps = torch.unique(sp_mask_resized)
+            num_sps = len(unique_sps)
+            
+            # 为每个超像素生成特征
+            sp_features = []
+            for sp_id in unique_sps:
+                # 超像素区域掩码
+                sp_region = (sp_mask_resized == sp_id).float()
+                
+                # 计算超像素中心坐标 (归一化)
+                y_coords, x_coords = torch.where(sp_mask_resized == sp_id)
+                if len(y_coords) > 0:
+                    center_y = y_coords.float().mean() / target_size[0]
+                    center_x = x_coords.float().mean() / target_size[1]
+                    pos_feat = self.sp_pos_embed(torch.tensor([center_x, center_y]).to(queries.device))
+                else:
+                    pos_feat = torch.zeros(queries.shape[-1]).to(queries.device)
+                
+                # 超像素大小特征
+                sp_size = sp_region.sum().unsqueeze(0) / (target_size[0] * target_size[1])
+                size_feat = self.sp_feature_mlp(sp_size.to(queries.device))
+                
+                # 组合特征
+                sp_feat = size_feat + pos_feat
+                sp_features.append(sp_feat)
+            
+            # 将超像素特征与原始queries融合
+            batch_queries = queries[:, b, :]  # [num_queries, hidden_dim]
+            
+            if len(sp_features) > 0:
+                sp_features = torch.stack(sp_features)  # [num_sps, hidden_dim]
+                
+                # 为每个query分配最相关的超像素特征
+                if len(sp_features) >= self.num_queries:
+                    # 超像素数量 >= query数量，选择前num_queries个
+                    selected_sp_feat = sp_features[:self.num_queries]
+                else:
+                    # 超像素数量 < query数量，基于超像素大小加权重复
+                    sp_sizes = [sp_region.sum().item() for sp_region in sp_features]
+                    weights = torch.tensor(sp_sizes) / sum(sp_sizes)
+                    repeat_counts = (weights * self.num_queries).round().int()
+                    
+                    selected_sp_feat = []
+                    for i, count in enumerate(repeat_counts):
+                        selected_sp_feat.extend([sp_features[i]] * count)
+                    selected_sp_feat = torch.stack(selected_sp_feat[:self.num_queries])
+                
+                # 融合原始query和超像素特征
+                combined_feat = torch.cat([batch_queries, selected_sp_feat], dim=-1)
+                fused_query = self.query_fusion_mlp(combined_feat)
+            else:
+                # 没有超像素信息时保持原始query
+                fused_query = batch_queries
+            
+            fused_queries.append(fused_query)
+        
+        # 重新组织为 [num_queries, bs, hidden_dim]
+        return torch.stack(fused_queries, dim=1)
 
 
 class SelfAttentionLayer(nn.Module):

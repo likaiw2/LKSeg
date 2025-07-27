@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple, Union
 
-from pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
-from transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
-from utils import ShapeSpec
+from models.sp_mask2former.pixel_decoder import BasePixelDecoder, MSDeformAttnPixelDecoder
+from models.sp_mask2former.transformer_decoder import StandardTransformerDecoder, MultiScaleMaskedTransformerDecoder
+from models.sp_mask2former.utils import ShapeSpec
 
 
 class SPMaskFormerHead(nn.Module):

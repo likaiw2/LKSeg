@@ -14,8 +14,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-# os.environ["WANDB_MODE"] = "offline"
-os.environ["WANDB_MODE"] = "online"
+os.environ["WANDB_MODE"] = "offline"
+# os.environ["WANDB_MODE"] = "online"
 
 
 def seed_everything(seed):
@@ -50,23 +50,90 @@ def train_one_epoch(config, model, loader, optimizer, loss_fn, device, epoch):
     pbar = tqdm(loader, desc=f"Train Epoch {epoch}")
     
     for i, batch in enumerate(pbar):
-        img = batch['img'].to(device)
-        mask = batch['gt_semantic_seg'].to(device)
-
-        optimizer.zero_grad()
-        outputs = model(img)
+        img = batch['image'].to(device).float()  # 添加.float()
+        mask = batch['semantic_mask'].to(device)
         
         # 打印第一个批次的形状和值范围
         if first_batch:
             print(f"# Image shape: {img.shape}, range: [{img.min().item()}, {img.max().item()}]")
             print(f"# Mask shape: {mask.shape}, range: [{mask.min().item()}, {mask.max().item()}], unique values: {torch.unique(mask).cpu().numpy()}")
-            print(f"# Output shape: {outputs.shape}, range: [{outputs.min().item()}, {outputs.max().item()}]")
+            # print(f"# Output shape: {outputs.shape}, range: [{outputs.min().item()}, {outputs.max().item()}]")
             first_batch = False
+
+        optimizer.zero_grad()
         
-        loss = loss_fn(outputs, mask)
-        loss.backward()
+        # 构造SP_Mask2Former期望的批量输入格式
+        batched_inputs = []
+        for b in range(img.shape[0]):
+            sample_input = {
+                "image": img[b].float(),  # 确保是float32
+                "height": img.shape[2],
+                "width": img.shape[3],
+            }
+            
+            # 添加超像素掩码
+            if 'superpixel_mask' in batch and batch['superpixel_mask'] is not None:
+                sample_input["superpixel_mask"] = batch['superpixel_mask'][b]
+            
+            # 如果训练时需要ground truth，构造instances格式
+            if model.training:
+                gt_mask = mask[b]  # [H, W]
+                unique_classes = torch.unique(gt_mask)
+                unique_classes = unique_classes[unique_classes != config.ignore_index if hasattr(config, 'ignore_index') else unique_classes != 255]
+                
+                # 为每个类别创建二进制掩码
+                gt_masks_list = []
+                gt_classes_list = []
+                
+                for cls in unique_classes:
+                    if hasattr(config, 'ignore_index') and cls == config.ignore_index:
+                        continue
+                    if cls == 255:  # 默认忽略值
+                        continue
+                    binary_mask = (gt_mask == cls).float()
+                    if binary_mask.sum() > 0:  # 只保留非空掩码
+                        gt_masks_list.append(binary_mask)
+                        gt_classes_list.append(cls)
+                
+                if len(gt_masks_list) > 0:
+                    # 创建mock instances对象
+                    instance = type('MockInstance', (), {})()
+                    instance.gt_masks = torch.stack(gt_masks_list)
+                    instance.gt_classes = torch.tensor(gt_classes_list, device=device)
+                else:
+                    # 空实例
+                    instance = type('MockInstance', (), {})()
+                    instance.gt_masks = torch.zeros((0, mask.shape[1], mask.shape[2]), device=device)
+                    instance.gt_classes = torch.zeros((0,), dtype=torch.long, device=device)
+                
+                sample_input["instances"] = instance
+            
+            batched_inputs.append(sample_input)
+
+        # 模型前向传播
+        outputs = model(batched_inputs)
         
-        # 添加梯度裁剪以提高稳定性
+        # 处理损失
+        if model.training:
+            # 训练时outputs是损失字典
+            loss = sum(outputs.values())
+        else:
+            # 推理时需要转换输出格式并计算损失
+            batch_preds = []
+            for sample_output in outputs:
+                if 'sem_seg' in sample_output:
+                    batch_preds.append(sample_output['sem_seg'])
+                elif 'pred_logits' in sample_output and 'pred_masks' in sample_output:
+                    pred_logits = sample_output['pred_logits'].unsqueeze(0)
+                    pred_masks = sample_output['pred_masks'].unsqueeze(0)
+                    sem_seg = get_semantic_seg_from_query_outputs(pred_logits, pred_masks)
+                    batch_preds.append(sem_seg.squeeze(0))
+                else:
+                    batch_preds.append(torch.zeros_like(mask[0]))
+            
+            outputs = torch.stack(batch_preds)
+            loss = loss_fn(outputs, mask)
+        
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         
         optimizer.step()
@@ -188,8 +255,8 @@ def validate(config, model, loader, loss_fn, device):
     
     with torch.no_grad():
         for i, batch in enumerate(pbar):
-            img = batch['img'].to(device)
-            mask = batch['gt_semantic_seg'].to(device)
+            img = batch['image'].to(device)
+            mask = batch['semantic_mask'].to(device)
             
             # 处理掩码维度（如果需要）
             if mask.dim() == 4 and mask.shape[1] == 1:

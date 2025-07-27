@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import sys
+import os
+# Add parent directory to path for importing models
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from data_reader.transform import Compose,RandomCrop,PadImage,RandomHorizontalFlip,RandomVerticalFlip,Resize,RandomScale,ColorJitter,SmartCropV1,SmartCropV2
 import os
 import os.path as osp
@@ -11,6 +16,7 @@ from PIL import Image
 import random
 from torch.utils.data import DataLoader
 import cv2
+from skimage.segmentation import mark_boundaries
 
 class LoveDATrainDataset(Dataset):
     def __init__(self, 
@@ -69,6 +75,7 @@ class LoveDATrainDataset(Dataset):
         self.PALETTE = list(self.COLOR_MAP.values())
 
 
+
     def __getitem__(self, index):
 
         img, mask = self._load_image_and_mask(index)
@@ -102,8 +109,6 @@ class LoveDATrainDataset(Dataset):
             
             # 初始化superpixel提取器
             extractor = SuperpixelExtractor(self.superpixel_type)
-            
-            # 生成superpixel
             _, _, _, assigned_masks = extractor(img_tensor, self.superpixel_dict)
             
             # 获取superpixel标签矩阵 [H, W]
@@ -121,8 +126,8 @@ class LoveDATrainDataset(Dataset):
         img_id, img_type = self.img_ids[index]
         
         return {
-            'img': img,
-            'gt_semantic_seg': mask,
+            'image': img,
+            'semantic_mask': mask,
             'img_id': img_id,
             'img_type': img_type,
             'superpixel_mask': sp_input
@@ -296,16 +301,73 @@ class LoveDATrainDataset(Dataset):
 
 if __name__ == '__main__':
     
-    # Example usage
-    train_dataset = LoveDATrainDataset(data_root='/home/likai/code/LKSeg/data/LoveDA/Train')
+    # Test superpixel functionality
+    print("Testing superpixel functionality...")
+    
+    # Create dataset with superpixel enabled
+    train_dataset_sp = LoveDATrainDataset(
+        data_root='/home/likai/code/LKSeg/data/LoveDA/Train',
+        superpixel=True,
+        superpixel_type="slic",
+        superpixel_dict={
+            "n_segments": 100,
+            "compactness": 20,
+            "sigma": 1,
+            "start_label": 0,
+            "min_size_factor": 0.5,
+            "max_num_iter": 10,
+            "enforce_connectivity": True,
+        }
+    )
+    
+    # Test single sample with superpixel
+    sample_sp = train_dataset_sp[0]
+    print(f"\nSuperpixel sample keys: {sample_sp.keys()}")
+    
+    if 'superpixel_mask' in sample_sp:
+        sp_mask = sample_sp['superpixel_mask']
+        print(f"Superpixel mask shape: {sp_mask.shape}")
+        print(f"Superpixel mask dtype: {sp_mask.dtype}")
+        print(f"Number of superpixels: {len(np.unique(sp_mask))}")
+        print(f"Superpixel labels range: [{sp_mask.min()}, {sp_mask.max()}]")
+        
+        # Save visualization
+        img_array = np.array(sample_sp['img'].permute(1, 2, 0) * 255, dtype=np.uint8)
+        
+        # Create superpixel boundary visualization
+        boundaries = mark_boundaries(img_array / 255.0, sp_mask)
+        
+        # Save results
+        os.makedirs('temp/superpixel_test', exist_ok=True)
+        train_dataset_sp.save_image(sample_sp['img'], 'temp/superpixel_test/original.png')
+        train_dataset_sp.save_mask(sp_mask, 'temp/superpixel_test/superpixel_labels.png', use_color_map=False)
+        
+        # Save boundary visualization
+        import cv2
+        boundaries_bgr = cv2.cvtColor((boundaries * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cv2.imwrite('temp/superpixel_test/superpixel_boundaries.png', boundaries_bgr)
+        
+        print("Superpixel test passed! Results saved to temp/superpixel_test/")
+    else:
+        print("Superpixel mask not found in sample")
+    
+    # Test without superpixel for comparison
+    train_dataset_normal = LoveDATrainDataset(
+        data_root='/home/likai/code/LKSeg/data/LoveDA/Train',
+        superpixel=False
+    )
+    
+    sample_normal = train_dataset_normal[0]
+    print(f"\nNormal sample keys: {sample_normal.keys()}")
+    print(f"Has sp_input: {'sp_input' in sample_normal}")
     
     # Test dataset basic properties
-    print(f"Dataset length: {len(train_dataset)}")
-    print(f"Number of classes: {len(train_dataset.CLASSES)}")
-    print(f"Classes: {train_dataset.CLASSES}")
+    print(f"Dataset length: {len(train_dataset_normal)}")
+    print(f"Number of classes: {len(train_dataset_normal.CLASSES)}")
+    print(f"Classes: {train_dataset_normal.CLASSES}")
     
     # Test single sample
-    sample = train_dataset[0]
+    sample = train_dataset_normal[0]
     print(f"\nSample keys: {sample.keys()}")
     print(f"Image shape: {sample['img'].shape}")
     print(f"Image dtype: {sample['img'].dtype}")
