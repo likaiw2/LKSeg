@@ -62,17 +62,6 @@ class BasePixelDecoder(nn.Module):
         self.maskformer_num_feature_levels = 3
 
     def forward(self, features, mask=None):
-        # 在forward开始时确保所有层都在正确设备上
-        device = next(iter(features.values())).device
-        
-        # 确保lateral_convs在正确设备上
-        for conv in self.lateral_convs:
-            conv = conv.to(device)
-        
-        # 确保output_convs在正确设备上  
-        for conv in self.output_convs:
-            conv = conv.to(device)
-        
         multi_scale_features = []
         num_cur_levels = 0
         
@@ -186,8 +175,8 @@ class MSDeformAttnPixelDecoder(nn.Module):
             lateral_convs.append(lateral_conv)
             output_convs.append(output_conv)
         
-        self.lateral_convs = lateral_convs[::-1]
-        self.output_convs = output_convs[::-1]
+        self.lateral_convs = nn.ModuleList(lateral_convs[::-1])
+        self.output_convs = nn.ModuleList(output_convs[::-1])
 
     def forward(self, features):
         # Transformer encoder

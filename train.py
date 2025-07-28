@@ -310,9 +310,11 @@ def main():
                )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = config.net.to(device)
+    model = config.net
     if config.pretrained_ckpt_path:
         model.load_state_dict(torch.load(config.pretrained_ckpt_path, map_location=device))
+
+    model = model.to(device)
 
     optimizer = config.optimizer
     lr_scheduler = config.lr_scheduler
