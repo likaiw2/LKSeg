@@ -421,10 +421,10 @@ class SwinTransformer(nn.Module):
 
     def output_shape(self):
         return {
-            "res2": ShapeSpec(channels=192, stride=4),  # 修改为192
-            "res3": ShapeSpec(channels=384, stride=8),  # 修改为384  
-            "res4": ShapeSpec(channels=768, stride=16), # 修改为768
-            "res5": ShapeSpec(channels=768, stride=32),
+            "res2": ShapeSpec(channels=192, stride=4),
+            "res3": ShapeSpec(channels=384, stride=8),  
+            "res4": ShapeSpec(channels=768, stride=16),
+            # 移除res5
         }
 
     def forward(self, x):

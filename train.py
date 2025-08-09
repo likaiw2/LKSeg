@@ -66,7 +66,7 @@ def train_one_epoch(config, model, loader, optimizer, loss_fn, device, epoch):
         batched_inputs = []
         for b in range(img.shape[0]):
             sample_input = {
-                "image": img[b].float(),  # 确保是float32
+                "image": img[b].float(),
                 "height": img.shape[2],
                 "width": img.shape[3],
             }
