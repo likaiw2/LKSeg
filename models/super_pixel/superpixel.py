@@ -6,7 +6,51 @@ from skimage.filters import sobel
 from skimage.measure import regionprops
 from skimage.segmentation import felzenszwalb, slic, quickshift, watershed
 
-from models.super_pixel.superpixel_configs import felzenszwalb_parameters_dict, slic_parameters_dict, quickshift_parameters_dict, watershed_parameters_dict, seeds_parameters_dict
+import numpy as np
+from typing import Tuple, List
+
+SUPERPIXEL_PARAMETERS = {
+    "felzenszwalb": {
+        "scale": 600,  # Higher scale means less and larger segments
+        "sigma": 0.8,  # is the diameter of a Gaussian kernel, used for smoothing the image prior to segmentation.
+        "min_size": 400,  # Minimum component size. Enforced using postprocessing.
+    },
+    
+    "slic": {
+        "n_segments": 50,  # 100  # The (approximate) number of labels in the segmented output image.
+        "compactness": 20,
+        # Balances color proximity and space proximity. Higher values give more weight to space proximity, making superpixel shapes more square/cubic. We recommend exploring possible values on a log scale, e.g., 0.01, 0.1, 1, 10, 100, before refining around a chosen value.
+        "sigma": 1,  # 0,  # Width of Gaussian smoothing kernel for pre-processing for each dimension of the image.
+        "start_label": 0,
+        "min_size_factor": 0.5,  # Proportion of the minimum segment size to be removed with respect to the supposed segment size `depth*width*height/n_segments`
+        "max_num_iter": 10,  # Maximum number of iterations of k-means
+        "enforce_connectivity": True,  # Whether the generated segments are connected or not
+    },
+    
+    "quickshift": {
+        "ratio": 1.0,  # 1.0,  # Balances color-space proximity and image-space proximity. Higher values give more weight to color-space.
+        "kernel_size": 3,  # 5,  # Width of Gaussian kernel used in smoothing the sample density. Higher means fewer clusters.
+        "max_dist": 10,  # Cut-off point for data distances. Higher means fewer clusters.
+        "sigma": 1,  # Width of Gaussian smoothing kernel for pre-processing for each dimension of the image.
+    },
+    
+    "watershed": {
+        "markers": 200,  # The number of markers, i.e. the number of segments in the output segmentation.
+        "compactness": 1e-5,  # Use compact watershed with given compactness parameter. Higher values result in more regularly-shaped watershed basins.
+    },
+    
+    "seeds": {
+        "image_width": 1024,
+        "image_height": 1024,
+        "image_channels": 3,
+        "num_superpixels": 200,  # Desired number of superpixels. Note that the actual number may be smaller due to restrictions (depending on the image size and num_levels). Use getNumberOfSuperpixels() to get the actual number.
+        "num_levels": 4,  # Number of block levels. The more levels, the more accurate is the segmentation, but needs more memory and CPU time.
+        "prior": 1,  # enable 3x3 shape smoothing term if >0. A larger value leads to smoother shapes. prior must be in the range [0, 5].
+        "histogram_bins": 5,  # Number of histogram bins.
+        "double_step": False,  # If true, iterate each block level twice for higher accuracy.
+        "num_iterations": 10,  # Number of iterations. Higher number improves the result.
+    }
+}
 
 class SuperpixelExtractor:
     """Proposes class-agnostic masks for the given images using superpixels.
@@ -22,15 +66,15 @@ class SuperpixelExtractor:
 
             self.algorithm = algorithm
             if algorithm == "felzenszwalb":
-                parameters_dict = felzenszwalb_parameters_dict
+                parameters_dict = SUPERPIXEL_PARAMETERS["felzenszwalb"]
             elif algorithm == "slic":
-                parameters_dict = slic_parameters_dict
+                parameters_dict = SUPERPIXEL_PARAMETERS["slic"]
             elif algorithm == "quickshift":
-                parameters_dict = quickshift_parameters_dict
+                parameters_dict = SUPERPIXEL_PARAMETERS["quickshift"]
             elif algorithm == "watershed":
-                parameters_dict = watershed_parameters_dict
+                parameters_dict = SUPERPIXEL_PARAMETERS["watershed"]
             elif algorithm == "seeds":
-                parameters_dict = seeds_parameters_dict
+                parameters_dict = SUPERPIXEL_PARAMETERS["seeds"]
                 self.num_iterations = parameters_dict.pop("num_iterations")
             else:
                 raise NotImplementedError(f"Superpixel algorithm {algorithm} not implemented")
@@ -116,7 +160,6 @@ class SuperpixelExtractor:
 
         return pred_masks_batch, n_pred_masks, covered_pixels_batch, assigned_masks_batch
 
-
 class SEEDSSuperpixelExtractor:
 
     def __init__(self, num_superpixels, compactness_superpixels):
@@ -154,3 +197,148 @@ class SEEDSSuperpixelExtractor:
         centroids = np.array([np.rint(c.centroid).astype(np.int32) for c in regions_seeds])
 
         return segments, centroids
+
+class SPExtractorSAM(SuperpixelExtractor):
+    """继承超像素提取器，专门为SAM提供prompt格式的输出"""
+    
+    def __init__(self, algorithm: str = "slic", **kwargs):
+        super().__init__(algorithm)
+        # 可以通过kwargs覆盖默认参数
+        if kwargs:
+            self.parameters_dict.update(kwargs)
+    
+    def extract_centers(self, images: torch.Tensor) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        """
+        提取超像素中心点作为SAM的点提示
+        
+        Args:
+            images: 输入图像张量 (B, C, H, W)
+            
+        Returns:
+            centers_batch: 每张图像的中心点坐标列表 [(N1, 2), (N2, 2), ...]，格式为(x, y)
+            labels_batch: 每张图像的点标签列表 [(N1,), (N2,), ...]，全部为前景点(1)
+        """
+        # 调用父类方法获取超像素结果
+        _, n_pred_masks, _, assigned_masks_batch = self(images)
+        
+        centers_batch = []
+        labels_batch = []
+        
+        for i in range(images.shape[0]):
+            assigned_mask = assigned_masks_batch[i].numpy()  # (H, W)
+            unique_labels = np.unique(assigned_mask)
+            unique_labels = unique_labels[unique_labels > 0]  # 排除背景
+            
+            centers = []
+            for label in unique_labels:
+                mask_coords = np.where(assigned_mask == label)
+                if len(mask_coords[0]) > 0:
+                    # 计算中心点 (注意：转换为x,y格式)
+                    center_y = mask_coords[0].mean()
+                    center_x = mask_coords[1].mean()
+                    centers.append([center_x, center_y])
+            
+            centers = np.array(centers, dtype=np.float32)
+            labels = np.ones(len(centers), dtype=np.int32)  # 全部标记为前景点
+            
+            centers_batch.append(centers)
+            labels_batch.append(labels)
+        
+        return {
+            'centers': centers_batch,
+            'labels': labels_batch
+        }
+    
+    def extract_boxes(self, images: torch.Tensor) -> List[np.ndarray]:
+        """
+        提取超像素边界框作为SAM的框提示
+        
+        Args:
+            images: 输入图像张量 (B, C, H, W)
+            
+        Returns:
+            boxes_batch: 每张图像的边界框列表 [(N1, 4), (N2, 4), ...]，格式为(x1, y1, x2, y2)
+        """
+        # 调用父类方法获取超像素结果
+        _, n_pred_masks, _, assigned_masks_batch = self(images)
+        
+        boxes_batch = []
+        
+        for i in range(images.shape[0]):
+            assigned_mask = assigned_masks_batch[i].numpy()  # (H, W)
+            
+            # 使用regionprops计算每个区域的边界框
+            props = regionprops(assigned_mask.astype(int))
+            
+            boxes = []
+            for prop in props:
+                # regionprops返回(min_row, min_col, max_row, max_col)
+                min_row, min_col, max_row, max_col = prop.bbox
+                # 转换为SAM期望的(x1, y1, x2, y2)格式
+                box = [min_col, min_row, max_col, max_row]
+                boxes.append(box)
+            
+            boxes = np.array(boxes, dtype=np.float32)
+            boxes_batch.append(boxes)
+        
+        return {"boxes": boxes_batch}
+    
+    def extract_masks(self, images: torch.Tensor) -> Tuple[List[np.ndarray], List[int]]:
+        """
+        提取超像素掩码作为SAM的掩码提示
+        
+        Args:
+            images: 输入图像张量 (B, C, H, W)
+            
+        Returns:
+            masks_batch: 每张图像的二值掩码列表 [(N1, H, W), (N2, H, W), ...]
+            n_masks_batch: 每张图像的掩码数量列表 [N1, N2, ...]
+        """
+        # 调用父类方法获取超像素结果
+        pred_masks_batch, n_pred_masks, _, assigned_masks_batch = self(images)
+        
+        masks_batch = []
+        n_masks_batch = []
+        
+        # 重新组织掩码数据，按图像分组
+        mask_start_idx = 0
+        for i in range(images.shape[0]):
+            n_masks = n_pred_masks[i]
+            
+            # 提取当前图像的所有掩码
+            image_masks = pred_masks_batch[mask_start_idx:mask_start_idx + n_masks]
+            image_masks = image_masks.numpy().astype(np.uint8)  # 转换为numpy数组
+            
+            masks_batch.append(image_masks)
+            n_masks_batch.append(n_masks)
+            
+            mask_start_idx += n_masks
+        
+        return {
+            'masks': masks_batch,
+            'n_masks': n_masks_batch
+        }
+    
+    def get_all_prompts(self, images: torch.Tensor) -> dict:
+        """
+        一次性获取所有类型的提示
+        
+        Args:
+            images: 输入图像张量 (B, C, H, W)
+            
+        Returns:
+            prompts: 包含所有提示类型的字典
+        """
+        centers_batch, labels_batch = self.extract_centers(images)
+        boxes_batch = self.extract_boxes(images)
+        masks_batch, n_masks_batch = self.extract_masks(images)
+        
+        return {
+            'centers': centers_batch,
+            'labels': labels_batch,
+            'boxes': boxes_batch,
+            'masks': masks_batch,
+            'n_masks': n_masks_batch
+        }
+
+

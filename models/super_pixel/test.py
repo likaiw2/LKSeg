@@ -20,11 +20,11 @@ slic_parameters_dict = {
     "enforce_connectivity": True,  # Whether the generated segments are connected or not
 }
 
-# felzenszwalb_parameters_dict = {
-#     "scale": 600,  # Higher scale means less and larger segments
-#     "sigma": 0.8,  # is the diameter of a Gaussian kernel, used for smoothing the image prior to segmentation.
-#     "min_size": 400,  # Minimum component size. Enforced using postprocessing.
-# }
+felzenszwalb_parameters_dict = {
+    "scale": 600,  # Higher scale means less and larger segments
+    "sigma": 0.8,  # is the diameter of a Gaussian kernel, used for smoothing the image prior to segmentation.
+    "min_size": 400,  # Minimum component size. Enforced using postprocessing.
+}
 
 def test_single_image_all_algorithms(img_path):
     scale_list = [10, 50, 100, 300, 600]
@@ -44,11 +44,15 @@ def test_single_image_all_algorithms(img_path):
         plt.figure(figsize=(4 * cols, 4 * rows))
         for idx, sigma in enumerate(sigma_list):
             print(f"scale={scale}, sigma={sigma}")
-            felz_params = slic_parameters_dict.copy()
+            felz_params = felzenszwalb_parameters_dict.copy()
             felz_params["scale"] = scale
             felz_params["sigma"] = sigma
             try:
+                print(img_tensor.shape)
                 _, n_masks, _, assigned = extractor(img_tensor, felz_params)
+                print(n_masks)
+                print(assigned.shape)
+                exit()
                 segments = assigned[0].numpy()
                 vis_image = mark_boundaries(img_for_vis, segments)
                 plt.subplot(rows, cols, idx + 1)
@@ -63,7 +67,28 @@ def test_single_image_all_algorithms(img_path):
         plt.close()
 
 
-# 调用主函数
-image_id = "235"
-image_path = f"/home/liw324/code/Segment/LKSeg/data/EarthVQA/Train/images_png/{image_id}.png"
-test_single_image_all_algorithms(image_path)
+def test_multiple_images(image_ids, base_path):
+    batch_image = []
+    """批量处理多张图片"""
+    for i, image_id in enumerate(image_ids):
+        print(f"\n=== 处理图片 {i+1}/{len(image_ids)}: {image_id} ===")
+        image_path = f"{base_path}/{image_id}.png"
+        
+        img = imread(image_path)
+        if img.shape[-1] > 3:
+            img = img[:, :, :3]
+        img_tensor = torch.from_numpy(img.transpose(2, 0, 1)).unsqueeze(0).float()
+    
+        batch_image.append(img_tensor)    
+
+    batch_image = torch.cat(batch_image, dim=0)
+    extractor = SuperpixelExtractor("slic")
+    print(batch_image.shape)
+    _, n_masks, _, assigned = extractor(batch_image, slic_parameters_dict)
+    print(n_masks)
+    print(assigned.shape)
+
+# 调用批处理函数
+image_ids = ["235", "236", "237", "238", "239"]
+base_path = "/data/likai/LoveDA/Train/Rural/images_png"
+test_multiple_images(image_ids, base_path)
