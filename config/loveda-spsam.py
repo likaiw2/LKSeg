@@ -1,33 +1,57 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
-from data_reader.loveda_dataset import LoveDATrainDataset,CLASSES
-from models.SPSam import SPSam
+from data_reader.loveda_dataset import LoveDATrainDataset
+from models.spsam import SPSam
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
+import torch
+import torch.nn.functional as F
+
 present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 # ------------------------------------------
 # Training Hyperparameters
 # ------------------------------------------
+CLASSES = LoveDATrainDataset().CLASSES
 max_epoch = 45
 ignore_index = len(CLASSES)
-train_batch_size = 4
-val_batch_size = 4
-lr = 9e-3
+train_batch_size = 2  # 较小的batch size，因为SAM比较大
+val_batch_size = 2
+lr = 1e-4  # 较小的学习率，因为使用预训练的SAM
 weight_decay = 0.01
-backbone_lr = 0.001
+backbone_lr = 1e-5  # SAM backbone使用更小的学习率
 backbone_weight_decay = 0.01
 num_classes = len(CLASSES)
 classes = CLASSES
 
 # ------------------------------------------
+# SPSam特定参数
+# ------------------------------------------
+sam_checkpoint = "checkpoints/sam_vit_h_4b8939.pth"  # SAM权重路径
+sam_model_type = "vit_h"  # 可选: "vit_h", "vit_l", "vit_b"
+n_segments = 100  # 超像素数量
+compactness = 5  # 超像素紧密度
+points_per_batch = 32  # 每批处理的点数
+pred_iou_thresh = 0.5  # IoU阈值
+multimask_output = False  # 训练时建议False
+
+# ------------------------------------------
+# 损失函数权重
+# ------------------------------------------
+loss_weights = {
+    "loss_ce": 2.0,      # 分类损失权重
+    "loss_mask": 5.0,    # 掩码损失权重  
+    "loss_dice": 5.0,    # Dice损失权重
+}
+
+# ------------------------------------------
 # Logging and Saving Settings
 # ------------------------------------------
 save_path = "out"
-model_name = "sp_sam"
+model_name = "spsam"
 dataset_name = "loveda"
-weights_path = f"{save_path}/model_weights/loveda/{model_name}_{present_time}"
+weights_path = f"{save_path}/model_weights/{dataset_name}/{model_name}_{present_time}"
 log_name = f'{dataset_name}-{model_name}'
 check_val_every_n_epoch = 1
 save_top_k = 1
@@ -41,40 +65,120 @@ monitor = 'val_mIoU'
 monitor_mode = 'max'
 
 pretrained_ckpt_path = None
-resume_ckpt_path = None #"model_weights/loveda/delta-0817l0.8lr/delta-0817l0.8lr.ckpt"  # whether continue training with the checkpoint, default None
+resume_ckpt_path = None
 
-#  define the network
-net = SPSam(num_classes=num_classes)
+# ------------------------------------------
+# 构建SPSam模型
+# ------------------------------------------
+def create_spsam_model():
+    """创建SPSam模型"""
+    # 构建基础SPSam模型
+    spsam = SPSam(
+        sam_checkpoint=sam_checkpoint,
+        model_type=sam_model_type,
+        num_classes=num_classes,
+        n_segments=n_segments,
+        compactness=compactness,
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    
+    # 更新模型参数
+    spsam.points_per_batch = points_per_batch
+    spsam.pred_iou_thresh = pred_iou_thresh
+    spsam.multimask_output = multimask_output
+    
+    # 重新初始化分类头以匹配类别数
+    spsam.class_embed = torch.nn.Linear(256, num_classes + 1)
+    
+    # 更新损失函数权重
+    if hasattr(spsam, 'criterion'):
+        spsam.criterion.weight_dict = loss_weights
+    
+    return spsam
 
-# define the loss
-from tools.losses import QuerySegmentationLoss
-loss = QuerySegmentationLoss(num_classes=num_classes, ignore_index=ignore_index)
-use_aux_loss = False  # 设置为False，因为我们现在只有一条预测路径
+# 创建网络
+net = create_spsam_model()
 
-# define the optimizer
-layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
-net_params = utils.process_model_params(net, layerwise_params=layerwise_params)
-base_optimizer = torch.optim.AdamW(net_params, lr=lr, weight_decay=weight_decay)
-optimizer = Lookahead(base_optimizer)
+# ------------------------------------------
+# 优化器设置
+# ------------------------------------------
+def setup_optimizer(model):
+    """设置优化器，对SAM backbone使用较小学习率"""
+    # 分层参数设置
+    sam_params = []
+    other_params = []
+    
+    for name, param in model.named_parameters():
+        if 'sam_model' in name:
+            # SAM模型参数使用较小学习率
+            sam_params.append(param)
+        else:
+            # 其他参数（分类头等）使用正常学习率
+            other_params.append(param)
+    
+    # 创建参数组
+    param_groups = [
+        {'params': other_params, 'lr': lr, 'weight_decay': weight_decay},
+        {'params': sam_params, 'lr': backbone_lr, 'weight_decay': backbone_weight_decay}
+    ]
+    
+    base_optimizer = torch.optim.AdamW(param_groups)
+    return Lookahead(base_optimizer)
+
+optimizer = setup_optimizer(net)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epoch, eta_min=1e-6)
 
 # ------------------------------------------
-# Dataloader Settings
+# 数据加载器设置
 # ------------------------------------------
-train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train')
-val_dataset = LoveDATrainDataset(data_root='data/LoveDA/Val')
+train_dataset = LoveDATrainDataset(
+    data_root='data/LoveDA/Train',
+    output_size=[1024, 1024]
+)
+
+val_dataset = LoveDATrainDataset(
+    data_root='data/LoveDA/Val',
+    output_size=[1024, 1024]  # 与训练阶段保持一致
+)
+
 test_dataset = val_dataset
 
-train_loader = DataLoader(dataset=train_dataset,
-                          batch_size=train_batch_size,
-                          num_workers=2,
-                          pin_memory=True,
-                          shuffle=True,
-                          drop_last=True)
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=train_batch_size,
+    shuffle=True,
+    num_workers=8,  # 增加到8-12
+    pin_memory=True,  # 启用内存锁定
+    persistent_workers=True,  # 保持worker进程
+    prefetch_factor=4,  # 预取更多batch
+)
 
-val_loader = DataLoader(dataset=val_dataset,
-                        batch_size=val_batch_size,
-                        num_workers=2,
-                        shuffle=False,
-                        pin_memory=True,
-                        drop_last=False)
+val_loader = DataLoader(
+    val_dataset,
+    batch_size=val_batch_size,
+    shuffle=False,
+    num_workers=4,  # 验证也需要多进程
+    pin_memory=True,
+    persistent_workers=True,
+)
+
+# ------------------------------------------
+# 模型特定设置
+# ------------------------------------------
+def print_model_info():
+    """打印模型信息"""
+    total_params = sum(p.numel() for p in net.parameters())
+    trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    
+    print(f"SPSam Model Info:")
+    print(f"  SAM Model Type: {sam_model_type}")
+    print(f"  Number of Classes: {num_classes}")
+    print(f"  Superpixel Segments: {n_segments}")
+    print(f"  Points per Batch: {points_per_batch}")
+    print(f"  Total Parameters: {total_params:,}")
+    print(f"  Trainable Parameters: {trainable_params:,}")
+    print(f"  Loss Weights: {loss_weights}")
+
+# 在训练开始时调用
+if __name__ == "__main__":
+    print_model_info()

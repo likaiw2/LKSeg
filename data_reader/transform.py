@@ -97,7 +97,7 @@ class PadImage(object):
 
     def __call__(self, img, mask):
         assert img.size == mask.size
-        th, tw = self.size, self.size
+        th, tw = self.size[0], self.size[1]
 
         w, h = img.size
 

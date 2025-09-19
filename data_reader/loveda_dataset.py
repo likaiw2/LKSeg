@@ -1,144 +1,132 @@
 # -*- coding: utf-8 -*-
 
-from .transform import *
+import sys
+import os
+# Add parent directory to path for importing models
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from data_reader.transform import Compose,RandomCrop,PadImage,RandomHorizontalFlip,RandomVerticalFlip,Resize,RandomScale,ColorJitter,SmartCropV1,SmartCropV2
 import os
 import os.path as osp
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-import cv2
 import matplotlib.pyplot as plt
-import albumentations as albu
-import matplotlib.patches as mpatches
-from PIL import Image, ImageOps
+from PIL import Image
 import random
 from torch.utils.data import DataLoader
-
-
-
-COLOR_MAP = dict(
-    # nothing=(0, 0, 0),              # 0 black
-    Background=(255, 255, 255),     # 1 white
-    Building=(255, 0, 0),           # 2 red
-    Road=(255, 255, 0),             # 3 yellow
-    Water=(0, 0, 255),              # 4 blue
-    Barren=(159, 129, 183),         # 5 purple
-    Forest=(0, 255, 0),             # 6 green
-    Agricultural=(255, 195, 128),   # 7 orange
-)
-
-CLASSES = list(COLOR_MAP.keys())
-PALETTE = list(COLOR_MAP.values())
-
-ORIGIN_IMG_SIZE = (1024, 1024)
-INPUT_IMG_SIZE = (1024, 1024)
-TEST_IMG_SIZE = (1024, 1024)
-
-
-def get_training_transform():
-    train_transform = [
-        # albu.Resize(height=1024, width=1024),
-        albu.HorizontalFlip(p=0.5),
-        albu.VerticalFlip(p=0.5),
-        albu.RandomBrightnessContrast(brightness_limit=0.25, contrast_limit=0.25, p=0.25),
-        albu.Sharpen(),
-        albu.Normalize()
-    ]
-    return albu.Compose(train_transform)
-
-
-def train_aug(img, mask):
-    # multi-scale training and crop
-    crop_aug = Compose([RandomScale(scale_list=[0.75, 1.0, 1.25, 1.5], mode='value'),
-                        SmartCropV1(crop_size=INPUT_IMG_SIZE[0], max_ratio=0.75, ignore_index=255, nopad=False)])
-    img, mask = crop_aug(img, mask)
-
-    img, mask = np.array(img), np.array(mask)
-    aug = get_training_transform()(image=img.copy(), mask=mask.copy())
-    img, mask = aug['image'], aug['mask']
-
-    return img, mask
-
-
-def get_val_transform():
-    val_transform = [
-        # albu.Resize(height=1024, width=1024, interpolation=cv2.INTER_CUBIC),
-        albu.Normalize()
-    ]
-    return albu.Compose(val_transform)
-
-
-def val_aug(img, mask):
-    img, mask = np.array(img), np.array(mask)
-    aug = get_val_transform()(image=img.copy(), mask=mask.copy())
-    img, mask = aug['image'], aug['mask']
-    return img, mask
-
-
-def get_test_transform():
-    test_transform = [
-        albu.Normalize()
-    ]
-    return albu.Compose(test_transform)
-
-
-def test_aug(img, mask):
-    img, mask = np.array(img), np.array(mask)
-    aug = get_test_transform()(image=img.copy(), mask=mask.copy())
-    img, mask = aug['image'], aug['mask']
-    return img, mask
-
+import cv2
+from skimage.segmentation import mark_boundaries
 
 class LoveDATrainDataset(Dataset):
     def __init__(self, 
                  data_root='data/LoveDA/Train', 
                  img_dir='images_png', 
-                 mosaic_ratio=0,
                  mask_dir='masks_png', 
                  img_suffix='.png', 
                  mask_suffix='.png',
-                 transform=train_aug, 
-                 img_size=ORIGIN_IMG_SIZE):
+                 superpixel=False,
+                 superpixel_dict=None,
+                 superpixel_type=None,
+                 transform=None, 
+                 test_mode=False,
+                 original_size=[1024,1024],
+                 output_size=[512,512]):
         
         self.data_root = data_root
         self.img_dir = img_dir
         self.mask_dir = mask_dir
-        self.mosaic_ratio = mosaic_ratio
         self.img_suffix = img_suffix
         self.mask_suffix = mask_suffix
+        self.superpixel = superpixel
         self.transform = transform
-        self.img_size = img_size
-        self.img_ids = self._collect_img_ids()
+        self.test_mode = test_mode
+        self.original_size = original_size
+        self.img_size = output_size
+        self.img_ids = self._collect_img_id_region()
+        
+        if self.superpixel:
+            if superpixel_dict is not None:
+                self.superpixel_type = superpixel_type
+                self.superpixel_dict = superpixel_dict
+            else:
+                self.superpixel_type = "slic"
+                self.superpixel_dict = {
+                    "n_segments": 100,
+                    "compactness": 20,
+                    "sigma": 1,
+                    "start_label": 0,
+                    "min_size_factor": 0.5,
+                    "max_num_iter": 10,
+                    "enforce_connectivity": True,
+                }
+        
+        self.COLOR_MAP = dict(
+            nothing=(0, 0, 0),              # 0 black
+            Background=(255, 255, 255),     # 1 white
+            Building=(255, 0, 0),           # 2 red
+            Road=(255, 255, 0),             # 3 yellow
+            Water=(0, 0, 255),              # 4 blue
+            Barren=(159, 129, 183),         # 5 purple
+            Forest=(0, 255, 0),             # 6 green
+            Agricultural=(255, 195, 128),   # 7 orange
+        )
+        self.CLASSES = list(self.COLOR_MAP.keys())
+        self.PALETTE = list(self.COLOR_MAP.values())
+
+
 
     def __getitem__(self, index):
-        # 随机决定是否使用 mosaic 增强
-        if random.random() < self.mosaic_ratio:
-            img, mask = self._build_mosaic_image_and_mask(index)
+
+        img, mask = self._load_image_and_mask(index)
+
+        # apply data augmentation
+        if self.test_mode:
+            img, mask = img.resize(self.original_size), mask.resize(self.original_size)
         else:
-            img, mask = self._load_image_and_mask(index)
+            if self.transform:
+                img, mask = self.transform(img, mask)
+            else:
+                # use normal transform
+                self.transform = Compose([
+                    RandomScale(scale_list=[0.75, 1.0, 1.25, 1.5], mode='value'),
+                    SmartCropV1(crop_size=self.img_size[0], max_ratio=0.75, ignore_index=0, nopad=False),
+                    RandomHorizontalFlip(),
+                    RandomVerticalFlip(),
+                    PadImage(self.img_size, ignore_index=0),
+                ])
+                img, mask = self.transform(img, mask)
 
-        # 应用数据增强
-        if self.transform:
-            img, mask = self.transform(img, mask)
-
-        # 转为 PyTorch tensor 格式
-        img = torch.from_numpy(img).permute(2, 0, 1).float()
-        mask = torch.from_numpy(mask).long()
+        # # convert into numpy and standardize
+        # img = np.array(img).astype(np.float32) / 255.0                                      # normalize to [0,1]  
+        # img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])     # imagenet standardization  
+        # mask = np.array(mask)
+        
+        # convert into tensor
+        img = torch.from_numpy(np.array(img)).permute(2, 0, 1)
+        mask = torch.from_numpy(np.array(mask))
 
         img_id, img_type = self.img_ids[index]
         
         return {
-            'img': img,
-            'gt_semantic_seg': mask,
+            'image': img,
+            'semantic_mask': mask,
             'img_id': img_id,
-            'img_type': img_type
+            'img_type': img_type,
+            'superpixel_mask': sp_input
         }
 
     def __len__(self):
         return len(self.img_ids)
 
-    def _collect_img_ids(self):
-        # 统一获取 Urban 和 Rural 图像ID
+    def _collect_img_id_region(self):
+        '''
+            collect image ids and region type.
+            
+            return:
+                img_ids: list of tuple (img_id, region)
+        
+        '''
         img_ids = []
         for region in ['Urban', 'Rural']:
             img_path = osp.join(self.data_root, region, self.img_dir)
@@ -149,7 +137,16 @@ class LoveDATrainDataset(Dataset):
         return img_ids
 
     def _load_image_and_mask(self, index):
-        # 加载一张图像和其掩膜
+        '''
+            load image and mask.
+            
+            input:
+                index: int
+            
+            return: 
+                img: PIL.Image
+                mask: PIL.Image.mode = 'L' (grayscale)
+        '''
         img_id, img_type = self.img_ids[index]
         img_path = osp.join(self.data_root, img_type, self.img_dir, img_id + self.img_suffix)
         mask_path = osp.join(self.data_root, img_type, self.mask_dir, img_id + self.mask_suffix)
@@ -157,92 +154,234 @@ class LoveDATrainDataset(Dataset):
         img = Image.open(img_path).convert('RGB')
         mask = Image.open(mask_path).convert('L')
         
-        mask_np = np.array(mask)
-        mask_np[mask_np == 0] = len(CLASSES)  # 将背景标记为255
-        mask_np -= 1
-        mask = Image.fromarray(mask_np)
-        
         return img, mask
 
-    def _build_mosaic_image_and_mask(self, index):
-        # 构造 Mosaic 增强图像
-        indexes = [index] + random.choices(range(len(self)), k=3)
-        imgs_masks = [tuple(map(np.array, self._load_image_and_mask(i))) for i in indexes]
+    def save_image(self, img, filename, denormalize=None, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+        """
+        保存图像到指定文件
+        
+        Args:
+            img: PIL.Image, numpy.ndarray, or torch.Tensor
+            filename: str, 保存路径
+            denormalize: bool or None, 是否需要反标准化。None时自动判断
+            mean: list, ImageNet均值 (用于反标准化)
+            std: list, ImageNet标准差 (用于反标准化)
+        """
+        
+        # 转换为numpy数组
+        if isinstance(img, torch.Tensor):
+            # Tensor -> numpy
+            img_np = img.detach().cpu().numpy()
+            
+            # 处理维度 [C, H, W] -> [H, W, C]
+            if img_np.ndim == 3 and img_np.shape[0] in [1, 3]:
+                img_np = img_np.transpose(1, 2, 0)
+                
+        elif isinstance(img, Image.Image):
+            # PIL -> numpy
+            img_np = np.array(img)
+            
+        elif isinstance(img, np.ndarray):
+            img_np = img.copy()
+            
+        else:
+            raise ValueError(f"Unsupported image type: {type(img)}")
+        
+        # 自动判断是否需要反标准化
+        if denormalize is None:
+            # 如果数值范围在[-3, 3]左右，可能是标准化后的数据
+            if img_np.ndim >= 2 and img_np.shape[-1] == 3:
+                img_min, img_max = img_np.min(), img_np.max()
+                # 标准化后的数据通常在[-2.5, 2.5]范围内
+                denormalize = (img_min < -1.0 or img_max < 1.5) and (img_min > -5.0 and img_max < 5.0)
+            else:
+                denormalize = False
+        
+        # 执行反标准化
+        if denormalize and img_np.ndim >= 2 and img_np.shape[-1] == 3:
+            mean = np.array(mean).reshape(1, 1, 3)
+            std = np.array(std).reshape(1, 1, 3)
+            img_np = img_np * std + mean
+        
+        # 确保值在[0,1]范围内
+        if img_np.max() <= 1.0:
+            img_np = np.clip(img_np, 0, 1)
+            img_np = (img_np * 255).astype(np.uint8)
+        else:
+            img_np = np.clip(img_np, 0, 255).astype(np.uint8)
+        
+        # 处理灰度图
+        if img_np.ndim == 2:
+            cv2.imwrite(filename, img_np)
+        elif img_np.shape[-1] == 1:
+            cv2.imwrite(filename, img_np.squeeze(-1))
+        elif img_np.shape[-1] == 3:
+            # RGB -> BGR for OpenCV
+            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(filename, img_bgr)
+        else:
+            raise ValueError(f"Unsupported image shape: {img_np.shape}")
+        
+        print(f"Image saved: {filename} (denormalize: {denormalize})")
 
-        w, h = self.img_size
-        offset_x = random.randint(w // 4, 3 * w // 4)
-        offset_y = random.randint(h // 4, 3 * h // 4)
+    def save_mask(self, mask, filename, use_color_map=True):
+        """
+        保存掩码到指定文件
+        
+        Args:
+            mask: PIL.Image, numpy.ndarray, or torch.Tensor
+            filename: str, 保存路径
+            use_color_map: bool, 是否使用COLOR_MAP进行彩色保存，False则保存原数值标签
+        """
+        
+        
+        # 转换为numpy数组
+        if isinstance(mask, torch.Tensor):
+            # Tensor -> numpy
+            mask_np = mask.detach().cpu().numpy()
+            
+        elif isinstance(mask, Image.Image):
+            # PIL -> numpy
+            mask_np = np.array(mask)
+            
+        elif isinstance(mask, np.ndarray):
+            mask_np = mask.copy()
+            
+        else:
+            raise ValueError(f"Unsupported mask type: {type(mask)}")
+        
+        # 确保是2D数组
+        if mask_np.ndim == 3 and mask_np.shape[0] == 1:
+            mask_np = mask_np.squeeze(0)
+        elif mask_np.ndim == 3 and mask_np.shape[-1] == 1:
+            mask_np = mask_np.squeeze(-1)
+        
+        if use_color_map:
+            # 使用COLOR_MAP进行彩色保存
+            h, w = mask_np.shape
+            mask_rgb = np.zeros((h, w, 3), dtype=np.uint8)
+            
+            # 根据类别索引映射颜色
+            for class_idx, color in enumerate(self.PALETTE):
+                mask_rgb[mask_np == class_idx] = color
+            
+            # RGB -> BGR for OpenCV
+            mask_bgr = cv2.cvtColor(mask_rgb, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(filename, mask_bgr)
+            print(f"Color mask saved: {filename}")
+            
+        else:
+            # 保存原数值标签（灰度图）
+            mask_np = mask_np.astype(np.uint8)
+            cv2.imwrite(filename, mask_np)
+            print(f"Label mask saved: {filename}")
 
-        sizes = [
-            (offset_x, offset_y),
-            (w - offset_x, offset_y),
-            (offset_x, h - offset_y),
-            (w - offset_x, h - offset_y)
-        ]
-
-        crops = [
-            albu.RandomCrop(width=sw, height=sh)(image=img, mask=mask)
-            for (img, mask), (sw, sh) in zip(imgs_masks, sizes)
-        ]
-
-        # 拼接图像和掩膜
-        top = np.concatenate((crops[0]['image'], crops[1]['image']), axis=1)
-        bottom = np.concatenate((crops[2]['image'], crops[3]['image']), axis=1)
-        img = np.concatenate((top, bottom), axis=0)
-
-        top_mask = np.concatenate((crops[0]['mask'], crops[1]['mask']), axis=1)
-        bottom_mask = np.concatenate((crops[2]['mask'], crops[3]['mask']), axis=1)
-        mask = np.concatenate((top_mask, bottom_mask), axis=0)
-
-        return Image.fromarray(img), Image.fromarray(mask)
-    
 
 if __name__ == '__main__':
     
-    # Example usage
-    train_dataset = LoveDATrainDataset(data_root='data/LoveDA/Train')
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=1,
-        num_workers=2,
-        pin_memory=True,
-        shuffle=True,
-        drop_last=True
+    # Test superpixel functionality
+    print("Testing superpixel functionality...")
+    
+    # Create dataset with superpixel enabled
+    train_dataset_sp = LoveDATrainDataset(
+        data_root='/home/likai/code/LKSeg/data/LoveDA/Train',
+        superpixel=True,
+        superpixel_type="slic",
+        superpixel_dict={
+            "n_segments": 100,
+            "compactness": 20,
+            "sigma": 1,
+            "start_label": 0,
+            "min_size_factor": 0.5,
+            "max_num_iter": 10,
+            "enforce_connectivity": True,
+        }
     )
     
-    while True:
-        print("########")
-        sample = next(iter(train_loader))
-        print(sample['img'].size())
-        print(sample['gt_semantic_seg'].size(), sample['gt_semantic_seg'].unique())
-        print(sample['img_id'])
-        print(sample['img_type'])
-        print("########")
+    # Test single sample with superpixel
+    sample_sp = train_dataset_sp[0]
+    print(f"\nSuperpixel sample keys: {sample_sp.keys()}")
     
-
-    # image_path = f"/home/liw324/code/Segment/LKSeg/data/LoveDA/Train/{sample['img_type']}/masks_png/{sample['img_id']}.png"
-    # np_image = np.array(Image.open(image_path))
-    # print("ori_mask",np.unique(np_image))
+    if 'superpixel_mask' in sample_sp:
+        sp_mask = sample_sp['superpixel_mask']
+        print(f"Superpixel mask shape: {sp_mask.shape}")
+        print(f"Superpixel mask dtype: {sp_mask.dtype}")
+        print(f"Number of superpixels: {len(np.unique(sp_mask))}")
+        print(f"Superpixel labels range: [{sp_mask.min()}, {sp_mask.max()}]")
+        
+        # Save visualization
+        img_array = np.array(sample_sp['img'].permute(1, 2, 0) * 255, dtype=np.uint8)
+        
+        # Create superpixel boundary visualization
+        boundaries = mark_boundaries(img_array / 255.0, sp_mask)
+        
+        # Save results
+        os.makedirs('temp/superpixel_test', exist_ok=True)
+        train_dataset_sp.save_image(sample_sp['img'], 'temp/superpixel_test/original.png')
+        train_dataset_sp.save_mask(sp_mask, 'temp/superpixel_test/superpixel_labels.png', use_color_map=False)
+        
+        # Save boundary visualization
+        import cv2
+        boundaries_bgr = cv2.cvtColor((boundaries * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cv2.imwrite('temp/superpixel_test/superpixel_boundaries.png', boundaries_bgr)
+        
+        print("Superpixel test passed! Results saved to temp/superpixel_test/")
+    else:
+        print("Superpixel mask not found in sample")
     
-    # import torchvision.transforms.functional as F
-    # from torchvision.utils import save_image
-    # from PIL import Image
-
-    # # 获取样本
-    # # sample = train_dataset[0]
-    # img_tensor = sample['img']             # (3, H, W), float32
-    # mask_tensor = sample['gt_semantic_seg']  # (H, W), long
-
-    # # 保存图像（输入图像），转为 0-255 范围
-    # save_image(img_tensor, f"sample{sample['img_id']}_img.png")
-
-    # # 保存 mask（标签图）
-    # # 将语义标签转换为可视图像
-    # mask_np = mask_tensor.numpy().astype(np.uint8)
-    # color_map = np.array(PALETTE, dtype=np.uint8)  # shape: (7, 3)
-    # color_mask = color_map[mask_np]                # (H, W, 3)
-
-    # # 保存为PNG图像
-    # Image.fromarray(color_mask).save(f"sample{sample['img_id']}_mask.png")
+    # Test without superpixel for comparison
+    train_dataset_normal = LoveDATrainDataset(
+        data_root='/home/likai/code/LKSeg/data/LoveDA/Train',
+        superpixel=False
+    )
+    
+    sample_normal = train_dataset_normal[0]
+    print(f"\nNormal sample keys: {sample_normal.keys()}")
+    print(f"Has sp_input: {'sp_input' in sample_normal}")
+    
+    # Test dataset basic properties
+    print(f"Dataset length: {len(train_dataset_normal)}")
+    print(f"Number of classes: {len(train_dataset_normal.CLASSES)}")
+    print(f"Classes: {train_dataset_normal.CLASSES}")
+    
+    # Test single sample
+    sample = train_dataset_normal[0]
+    print(f"\nSample keys: {sample.keys()}")
+    print(f"Image shape: {sample['img'].shape}")
+    print(f"Image dtype: {sample['img'].dtype}")
+    print(f"Image range: [{sample['img'].min():.3f}, {sample['img'].max():.3f}]")
+    
+    print(f"Mask shape: {sample['gt_semantic_seg'].shape}")
+    print(f"Mask dtype: {sample['gt_semantic_seg'].dtype}")
+    print(f"Mask unique values: {torch.unique(sample['gt_semantic_seg']).numpy()}")
+    print(f"Image ID: {sample['img_id']}")
+    print(f"Image type: {sample['img_type']}")
+    
+    train_dataset.save_image(sample['img'], 'test_img.png')
+    train_dataset.save_mask(sample['gt_semantic_seg'], 'test_mask.png')
+    
+    # # Test multiple samples to ensure consistency
+    # print(f"\nTesting 5 random samples:")
+    # for i in range(5):
+    #     idx = random.randint(0, len(train_dataset)-1)
+    #     sample = train_dataset[idx]
+    #     print(f"Sample {idx}: img={sample['img'].shape}, mask={sample['gt_semantic_seg'].shape}, "
+    #           f"mask_range=[{sample['gt_semantic_seg'].min()}, {sample['gt_semantic_seg'].max()}], "
+    #           f"id={sample['img_id']}, type={sample['img_type']}")
+    
+    # # Test DataLoader compatibility
+    # train_loader = DataLoader(
+    #     train_dataset,
+    #     batch_size=2,
+    #     shuffle=True,
+    #     num_workers=0  # Set to 0 for testing
+    # )
+    
+    # batch = next(iter(train_loader))
+    # print(f"\nBatch test:")
+    # print(f"Batch img shape: {batch['img'].shape}")
+    # print(f"Batch mask shape: {batch['gt_semantic_seg'].shape}")
+    # print(f"Batch img_id: {batch['img_id']}")
+    # print(f"Batch img_type: {batch['img_type']}")
     
     

@@ -1,6 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
-from data_reader.loveda_dataset import *
+from torch import nn
+from data_reader.loveda_dataset import LoveDATrainDataset
 from models.MFANet import MFANet
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
@@ -8,7 +9,7 @@ import datetime
 present_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
 
 class CrossEntropyLoss(nn.Module):
-    def __init__(self, weight=None, ignore_index=255):
+    def __init__(self, weight=None, ignore_index=0):
         super(CrossEntropyLoss, self).__init__()
         self.weight = weight
         self.ignore_index = ignore_index
@@ -20,14 +21,6 @@ class CrossEntropyLoss(nn.Module):
         max_val = target.max().item()
         # print(f"Target min: {min_val}, max: {max_val}, output classes: {output.size(1)}")
         
-        # # 如果目标张量中有无效值，将其设置为忽略索引
-        # if min_val < 0 or max_val >= output.size(1):
-        #     print(f"Warning: Target contains invalid values:{target.unique()}. Setting them to ignore_index ({self.ignore_index}).")
-        #     # 创建掩码，标识有效的目标值
-        #     valid_mask = (target >= 0) & (target < output.size(1))
-        #     # 将无效值设置为忽略索引
-        #     target = torch.where(valid_mask, target, torch.tensor(self.ignore_index, device=target.device))
-        
         return F.cross_entropy(output, target, weight=self.weight, ignore_index=self.ignore_index)
 
 
@@ -35,15 +28,16 @@ class CrossEntropyLoss(nn.Module):
 # Training Hyperparameters
 # ------------------------------------------
 max_epoch = 100
-ignore_index = 255
+ignore_index = 0
 train_batch_size = 4
 val_batch_size = 4
 lr = 9e-3
 weight_decay = 0.01
 backbone_lr = 0.001
 backbone_weight_decay = 0.01
-num_classes = len(CLASSES)
-classes = CLASSES
+classes = LoveDATrainDataset.CLASSES
+num_classes = len(classes)
+
 
 # ------------------------------------------
 # Logging and Saving Settings
@@ -71,8 +65,7 @@ resume_ckpt_path = None #"model_weights/loveda/delta-0817l0.8lr/delta-0817l0.8lr
 net = MFANet(num_classes=num_classes)
 
 # define the loss
-loss = CrossEntropyLoss(ignore_index=ignore_index)
-use_aux_loss = False  # 设置为False，因为我们现在只有一条预测路径
+loss = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction='none')
 
 # define the optimizer
 layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
