@@ -12,3 +12,4 @@ out/*
 models/mask_proposer/__init__.py
 results/*
 temp/*
+checkpoints

@@ -97,31 +97,14 @@ class LoveDATrainDataset(Dataset):
                 ])
                 img, mask = self.transform(img, mask)
 
-        # generate superpixel mask
-        if not self.superpixel:
-            sp_input = None
-        else:
-            from models.super_pixel.superpixel import SuperpixelExtractor
-            
-            # 将PIL图像转换为tensor格式 [1, C, H, W]
-            img_array = np.array(img)
-            img_tensor = torch.from_numpy(img_array.transpose(2, 0, 1)).unsqueeze(0).float()
-            
-            # 初始化superpixel提取器
-            extractor = SuperpixelExtractor(self.superpixel_type)
-            _, _, _, assigned_masks = extractor(img_tensor, self.superpixel_dict)
-            
-            # 获取superpixel标签矩阵 [H, W]
-            sp_input = assigned_masks[0].numpy().astype(np.int32)
-
-        # convert into numpy and standardize
-        img = np.array(img).astype(np.float32) / 255.0                                      # normalize to [0,1]  
-        img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])     # imagenet standardization  
-        mask = np.array(mask)
+        # # convert into numpy and standardize
+        # img = np.array(img).astype(np.float32) / 255.0                                      # normalize to [0,1]  
+        # img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])     # imagenet standardization  
+        # mask = np.array(mask)
         
         # convert into tensor
-        img = torch.from_numpy(img).permute(2, 0, 1)
-        mask = torch.from_numpy(mask)
+        img = torch.from_numpy(np.array(img)).permute(2, 0, 1)
+        mask = torch.from_numpy(np.array(mask))
 
         img_id, img_type = self.img_ids[index]
         
@@ -184,9 +167,6 @@ class LoveDATrainDataset(Dataset):
             mean: list, ImageNet均值 (用于反标准化)
             std: list, ImageNet标准差 (用于反标准化)
         """
-        
-        # 创建目录
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
         
         # 转换为numpy数组
         if isinstance(img, torch.Tensor):
@@ -254,8 +234,6 @@ class LoveDATrainDataset(Dataset):
             use_color_map: bool, 是否使用COLOR_MAP进行彩色保存，False则保存原数值标签
         """
         
-        # 创建目录
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
         
         # 转换为numpy数组
         if isinstance(mask, torch.Tensor):
@@ -378,6 +356,9 @@ if __name__ == '__main__':
     print(f"Mask unique values: {torch.unique(sample['gt_semantic_seg']).numpy()}")
     print(f"Image ID: {sample['img_id']}")
     print(f"Image type: {sample['img_type']}")
+    
+    train_dataset.save_image(sample['img'], 'test_img.png')
+    train_dataset.save_mask(sample['gt_semantic_seg'], 'test_mask.png')
     
     # # Test multiple samples to ensure consistency
     # print(f"\nTesting 5 random samples:")
