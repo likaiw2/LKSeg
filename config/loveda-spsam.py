@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from tools.losses import *
 from data_reader.loveda_dataset import LoveDATrainDataset
-from models.spsam import SPSam, build_spsam
+from models.spsam import SPSam
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import datetime
@@ -31,7 +31,7 @@ classes = CLASSES
 sam_checkpoint = "checkpoints/sam_vit_h_4b8939.pth"  # SAM权重路径
 sam_model_type = "vit_h"  # 可选: "vit_h", "vit_l", "vit_b"
 n_segments = 100  # 超像素数量
-compactness = 10.0  # 超像素紧密度
+compactness = 5  # 超像素紧密度
 points_per_batch = 32  # 每批处理的点数
 pred_iou_thresh = 0.5  # IoU阈值
 multimask_output = False  # 训练时建议False
@@ -43,13 +43,6 @@ loss_weights = {
     "loss_ce": 2.0,      # 分类损失权重
     "loss_mask": 5.0,    # 掩码损失权重  
     "loss_dice": 5.0,    # Dice损失权重
-}
-
-# Hungarian匹配器参数
-matcher_costs = {
-    "cost_class": 2.0,   # 分类成本
-    "cost_mask": 5.0,    # 掩码成本
-    "cost_dice": 5.0,    # Dice成本
 }
 
 # ------------------------------------------
@@ -80,16 +73,16 @@ resume_ckpt_path = None
 def create_spsam_model():
     """创建SPSam模型"""
     # 构建基础SPSam模型
-    spsam = build_spsam(
+    spsam = SPSam(
         sam_checkpoint=sam_checkpoint,
         model_type=sam_model_type,
+        num_classes=num_classes,
         n_segments=n_segments,
         compactness=compactness,
         device="cuda" if torch.cuda.is_available() else "cpu"
     )
     
     # 更新模型参数
-    spsam.num_classes = num_classes
     spsam.points_per_batch = points_per_batch
     spsam.pred_iou_thresh = pred_iou_thresh
     spsam.multimask_output = multimask_output
@@ -100,33 +93,11 @@ def create_spsam_model():
     # 更新损失函数权重
     if hasattr(spsam, 'criterion'):
         spsam.criterion.weight_dict = loss_weights
-        # 更新匹配器成本
-        if hasattr(spsam.criterion, 'matcher'):
-            spsam.criterion.matcher.cost_class = matcher_costs["cost_class"]
-            spsam.criterion.matcher.cost_mask = matcher_costs["cost_mask"] 
-            spsam.criterion.matcher.cost_dice = matcher_costs["cost_dice"]
     
     return spsam
 
 # 创建网络
 net = create_spsam_model()
-
-# ------------------------------------------
-# 损失函数（SPSam内置损失）
-# ------------------------------------------
-# SPSam使用内置的criterion，这里定义一个兼容的损失函数用于验证
-class SPSamCompatibleLoss(nn.Module):
-    def __init__(self, ignore_index=255):
-        super().__init__()
-        self.ignore_index = ignore_index
-        self.ce_loss = nn.CrossEntropyLoss(ignore_index=ignore_index)
-    
-    def forward(self, pred_logits, targets):
-        """兼容性损失函数，用于验证阶段"""
-        return self.ce_loss(pred_logits, targets)
-
-loss = SPSamCompatibleLoss(ignore_index=ignore_index)
-use_aux_loss = False
 
 # ------------------------------------------
 # 优化器设置
@@ -173,21 +144,22 @@ val_dataset = LoveDATrainDataset(
 test_dataset = val_dataset
 
 train_loader = DataLoader(
-    dataset=train_dataset,
+    train_dataset,
     batch_size=train_batch_size,
-    num_workers=2,  # 较少的worker，因为SPSam处理较慢
-    pin_memory=True,
     shuffle=True,
-    drop_last=True
+    num_workers=8,  # 增加到8-12
+    pin_memory=True,  # 启用内存锁定
+    persistent_workers=True,  # 保持worker进程
+    prefetch_factor=4,  # 预取更多batch
 )
 
 val_loader = DataLoader(
-    dataset=val_dataset,
+    val_dataset,
     batch_size=val_batch_size,
-    num_workers=2,
     shuffle=False,
+    num_workers=4,  # 验证也需要多进程
     pin_memory=True,
-    drop_last=False
+    persistent_workers=True,
 )
 
 # ------------------------------------------

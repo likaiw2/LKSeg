@@ -15,8 +15,8 @@ import pandas as pd
 import torch.nn.functional as F
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-# os.environ["WANDB_MODE"] = "online"
-os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
+# os.environ["WANDB_MODE"] = "offline"
 
 
 def seed_everything(seed):
@@ -75,12 +75,12 @@ def train_mode(config, device):
         print(f"Epoch {epoch}/{config.max_epoch} - Learning rate: {current_lr:.6f}")
         
         # 调用模型的训练方法
-        train_loss = model.train_one_epoch(config, train_loader, optimizer, config.loss, device, epoch)
+        train_loss = model.train_epoch(config, train_loader, optimizer, device, epoch)
         train_losses.append(train_loss)
         
         # 定期验证
         if epoch % config.check_val_every_n_epoch == 0:
-            val_loss, mIoU, OA = model.validate(config, val_loader, config.loss, device)
+            val_loss, mIoU, OA = model.validate_epoch(config, val_loader, device, max_samples=50)
             val_losses.append(val_loss)
             val_mious.append(mIoU)
             val_oas.append(OA)
@@ -165,7 +165,7 @@ def test_mode(config, device, weights_path):
             
             # 处理不同类型的输出
             if hasattr(model, '_validate_batch'):
-                _, pred_semantic = model._validate_batch(img, mask, config.loss)
+                _, pred_semantic = model._validate_batch(img, mask)
             else:
                 if isinstance(outputs, torch.Tensor):
                     pred_semantic = outputs.argmax(dim=1)
